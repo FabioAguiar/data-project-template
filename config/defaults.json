@@ -1,0 +1,19 @@
+{
+  "infer_types": true,
+  "cast_numeric_like": true,
+  "strip_whitespace": true,
+  "handle_missing": true,
+  "missing_strategy": "simple",
+  "detect_outliers": true,
+  "outlier_method": "iqr",
+  "deduplicate": true,
+  "encode_categoricals": true,
+  "encoding_type": "onehot",
+  "scale_numeric": false,
+  "scaler": "standard",
+  "date_features": true,
+  "text_features": false,
+  "feature_engineering": true,
+  "export_interim": true,
+  "export_processed": true
+}

@@ -7,6 +7,10 @@
   "detect_outliers": true,
   "outlier_method": "iqr",
   "deduplicate": true,
+  "deduplicate_subset": null,
+  "deduplicate_keep": "first",
+  "deduplicate_log": true,
+  "deduplicate_log_filename": "duplicates.csv", 
   "encode_categoricals": true,
   "encoding_type": "onehot",
   "scale_numeric": false,
@@ -15,5 +19,6 @@
   "text_features": false,
   "feature_engineering": true,
   "export_interim": true,
+  "normalize_categories": true,
   "export_processed": true
 }

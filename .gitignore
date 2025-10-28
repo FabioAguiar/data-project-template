@@ -34,15 +34,17 @@ secrets.*
 credentials.*
 
 # Estrutura do projeto
-#data/
+data/raw/
+data/interim/
+data/processed/
 !data/.gitkeep
 !data/README.md
 
-# reports/
+reports/data_preparation.log
 !reports/.gitkeep
 !reports/README.md
 
-# artifacts/
+artifacts/manifest.json
 !artifacts/.gitkeep
 !artifacts/README.md
 

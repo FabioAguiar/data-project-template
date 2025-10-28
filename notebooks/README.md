@@ -76,17 +76,3 @@ Abaixo estão as principais funções e seus propósitos:
   - Docstring curta explicando propósito e parâmetros;
   - Log informativo (`logger.info()`).
 
----
-
-## 🧠 Dica
-
-Você pode reunir todas as funções utilitárias em um único módulo Python (`utils_data.py`)  
-e importá-las no início de cada notebook:
-
-```python
-from utils_data import (
-    load_csv, save_parquet, basic_overview, reduce_memory_usage,
-    infer_numeric_like, strip_whitespace, missing_report, simple_impute,
-    detect_outliers_iqr, detect_outliers_zscore, deduplicate_rows,
-    encode_categories, scale_numeric
-)

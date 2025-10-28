@@ -194,3 +194,9 @@ Saídas esperadas:
 - Use nomes descritivos e com datas (`snake_case` + `YYYY-MM-DD`).
 
 ---
+
+### 🧭 Filosofia de normalização categórica
+Por padrão, mantemos os rótulos exatamente como estão nos dados brutos. A normalização só ocorre quando
+`normalize_categories = true`, garantindo **controle explícito** e evitando perda de semântica (ex.: diferenças sutis
+de grafia que carregam significado). Essa regra torna a transformação **previsível** e **auditável** — você decide quando
+e como normalizar.

@@ -1,7 +1,13 @@
 # utils_data.py
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    logger.addHandler(NullHandler())
+logger.setLevel(logging.INFO)
+
 from __future__ import annotations
 from typing import Tuple, Dict, Any, List, Optional, Iterable
 import logging
+from logging import NullHandler
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -13,9 +19,6 @@ try:
     from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder, StandardScaler, MinMaxScaler
 except Exception as e:
     raise ImportError("scikit-learn é necessário para utils_data.py: pip install scikit-learn") from e
-
-logger = logging.getLogger(__name__)
-
 def load_csv(filepath, **read_kwargs) -> pd.DataFrame:
     logger.info(f'Loading CSV: {filepath}')
     df = pd.read_csv(filepath, **read_kwargs)
@@ -301,18 +304,46 @@ def scale_numeric(df: pd.DataFrame, method: str = 'standard') -> Tuple[pd.DataFr
     return df, meta
 
 __all__ = [
-    "load_csv", "save_parquet", "basic_overview", "reduce_memory_usage",
-    "infer_numeric_like", "strip_whitespace", "missing_report", "simple_impute",
-    "detect_outliers_iqr", "detect_outliers_zscore", "deduplicate_rows",
-    "encode_categories", "scale_numeric"
+    'apply_encoding_and_scaling',
+    'basic_overview',
+    'build_calendar_from',
+    'deduplicate_rows',
+    'detect_date_candidates',
+    'detect_outliers_iqr',
+    'detect_outliers_zscore',
+    'encode_categories',
+    'encode_categories_safe',
+    'expand_date_features',
+    'extract_text_features',
+    'infer_format_from_suffix',
+    'infer_numeric_like',
+    'list_directory_files',
+    'load_artifact',
+    'load_csv',
+    'load_manifest',
+    'load_table_simple',
+    'merge_chain',
+    'missing_report',
+    'parse_dates_with_report',
+    'reduce_memory_usage',
+    'save_artifact',
+    'save_manifest',
+    'save_named_interims',
+    'save_parquet',
+    'save_table',
+    'scale_numeric',
+    'scale_numeric_safe',
+    'simple_impute',
+    'simple_impute_with_flags',
+    'strip_whitespace',
+    'summarize_text_features',
+    'update_manifest',
 ]
+
 
 # ==============================================
 # 📥 Ingestão flexível 
 # ==============================================
-
-logger = logging.getLogger(__name__)
-
 def infer_format_from_suffix(path) -> str:
     """Deduz o formato pelo sufixo do arquivo. Suporta .csv e .parquet."""
     ext = str(path).lower().rsplit(".", 1)[-1]
@@ -507,7 +538,7 @@ def simple_impute_with_flags(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ==============================================
-# 📅 Tatamento com Datas
+# 📅 Tratamento com Datas
 # ==============================================
 
 def detect_date_candidates(df: pd.DataFrame, pattern: str) -> List[str]:
@@ -683,7 +714,6 @@ def extract_text_features(
     (df, summary_df)
         df atualizado com novas colunas e resumo das colunas processadas.
     """
-    logger = logging.getLogger(__name__)
     df = df.copy()
 
     keywords = keywords or []
@@ -927,3 +957,255 @@ def list_directory_files(dir_path: Path, pattern: str = "*", sort_by: str = "nam
     return df_files.reset_index(drop=True)
 
 __all__.extend(["list_directory_files"])
+
+import json
+from pathlib import Path
+from datetime import datetime
+import joblib
+
+ARTIFACTS_DIR = Path("artifacts")
+REPORTS_DIR = Path("reports")
+ARTIFACTS_DIR.mkdir(exist_ok=True, parents=True)
+REPORTS_DIR.mkdir(exist_ok=True, parents=True)
+
+def _manifest_path() -> Path:
+    return ARTIFACTS_DIR / "manifest.json"
+
+def load_manifest() -> dict:
+    p = _manifest_path()
+    if p.exists():
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning(f"Falha ao ler manifest.json: {e}")
+    return {
+        "run": {"started_at": datetime.now().isoformat(timespec="seconds")},
+        "preprocessing": {},
+        "reports": [],
+        "artifacts": []
+    }
+
+def save_manifest(manifest: dict) -> None:
+    try:
+        _manifest_path().write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        logger.warning(f"Falha ao salvar manifest.json: {e}")
+
+def update_manifest(section: str, payload) -> None:
+    m = load_manifest()
+    if isinstance(payload, dict):
+        base = m.get(section, {})
+        if not isinstance(base, dict):
+            base = {}
+        base.update(payload)
+        m[section] = base
+    elif isinstance(payload, list):
+        base = m.get(section, [])
+        if not isinstance(base, list):
+            base = []
+        base.extend(payload)
+        m[section] = base
+    else:
+        m[section] = payload
+    save_manifest(m)
+
+def save_artifact(obj, filename: str) -> Path:
+    path = ARTIFACTS_DIR / filename
+    try:
+        joblib.dump(obj, path)
+        logger.info(f"Artefato salvo: {path}")
+        update_manifest("artifacts", [str(path)])
+    except Exception as e:
+        logger.warning(f"Falha ao salvar artefato {filename}: {e}")
+    return path
+
+def load_artifact(filename: str):
+    path = ARTIFACTS_DIR / filename
+    return joblib.load(path)
+
+
+
+from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder
+import pandas as pd
+
+def encode_categories_safe(
+    df: pd.DataFrame,
+    categorical_cols: list[str],
+    strategy: str = "onehot",
+    handle_unknown: str = "ignore",
+    encoder=None,
+    persist: bool = False,
+    artifact_name: str = "encoder.joblib",
+) -> tuple[pd.DataFrame, object, dict]:
+    if not categorical_cols:
+        logger.info("encode_categories_safe: nenhuma coluna categórica informada.")
+        return df, encoder, {"categories_": {}, "strategy": strategy, "used_cols": []}
+
+    X = df.copy()
+    info = {"strategy": strategy, "used_cols": categorical_cols}
+
+    if strategy == "onehot":
+        if encoder is None:
+            encoder = OneHotEncoder(handle_unknown=handle_unknown, sparse_output=False)
+            enc_data = encoder.fit_transform(X[categorical_cols])
+        else:
+            enc_data = encoder.transform(X[categorical_cols])
+
+        enc_df = pd.DataFrame(enc_data, index=X.index, columns=encoder.get_feature_names_out(categorical_cols))
+        X = pd.concat([X.drop(columns=categorical_cols), enc_df], axis=1)
+        info["categories_"] = {c: list(cat) for c, cat in zip(categorical_cols, encoder.categories_)}
+
+    elif strategy == "ordinal":
+        if encoder is None:
+            encoder = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1)
+            enc_data = encoder.fit_transform(X[categorical_cols])
+        else:
+            enc_data = encoder.transform(X[categorical_cols])
+        X[categorical_cols] = enc_data
+        info["categories_"] = {c: list(cat) for c, cat in zip(categorical_cols, encoder.categories_)}
+
+    else:
+        logger.warning(f"Estratégia de encoding desconhecida: {strategy}")
+        return df, None, {"error": "encoding_strategy_unsupported"}
+
+    if persist:
+        save_artifact(encoder, artifact_name)
+        update_manifest("preprocessing", {
+            "encoding": {
+                "strategy": strategy,
+                "categorical_cols": categorical_cols,
+                "artifact": artifact_name,
+                "handle_unknown": handle_unknown
+            }
+        })
+
+    return X, encoder, info
+
+
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
+import pandas as pd
+
+def scale_numeric_safe(
+    df: pd.DataFrame,
+    numeric_cols: list[str],
+    scaler=None,
+    strategy: str = "standard",
+    persist: bool = False,
+    artifact_name: str = "scaler.joblib",
+) -> tuple[pd.DataFrame, object, dict]:
+    if not numeric_cols:
+        logger.info("scale_numeric_safe: nenhuma coluna numérica informada.")
+        return df, scaler, {"used_cols": []}
+
+    X = df.copy()
+    info = {"used_cols": numeric_cols, "strategy": strategy}
+
+    if scaler is None:
+        if strategy == "standard":
+            scaler = StandardScaler()
+        elif strategy == "minmax":
+            scaler = MinMaxScaler()
+        else:
+            logger.warning(f"Estratégia de scaling desconhecida: {strategy}")
+            return df, None, {"error": "scaling_strategy_unsupported"}
+        arr = scaler.fit_transform(X[numeric_cols])
+    else:
+        arr = scaler.transform(X[numeric_cols])
+
+    X[numeric_cols] = arr
+
+    if persist:
+        save_artifact(scaler, artifact_name)
+        update_manifest("preprocessing", {
+            "scaling": {
+                "strategy": strategy,
+                "numeric_cols": numeric_cols,
+                "artifact": artifact_name
+            }
+        })
+
+    return X, scaler, info
+
+
+import pandas as pd
+import numpy as np
+
+def infer_numeric_like(series: pd.Series, name: str = None) -> tuple[pd.Series, pd.DataFrame]:
+    col = name or series.name or "<unnamed>"
+    before_dtype = str(series.dtype)
+
+    s = series.astype(str).str.strip()
+    cleaned = (
+        s.str.replace(r"[R$%\s]", "", regex=True)
+         .str.replace(".", "", regex=False)
+         .str.replace(",", ".", regex=False)
+    )
+
+    converted = pd.to_numeric(cleaned, errors="coerce")
+    n_converted = converted.notna().sum()
+    n_total = len(converted)
+
+    included = n_converted > max(2, 0.6 * n_total)
+    reason = "suficiente conversão" if included else "baixa conversão"
+
+    out = converted if included else series
+
+    report = pd.DataFrame([{
+        "column": col,
+        "included": bool(included),
+        "reason": reason,
+        "before_dtype": before_dtype,
+        "after_dtype": str(out.dtype),
+        "n_nulls": int(pd.isna(out).sum() if hasattr(out, "isna") else 0),
+        "converted_ratio": float(n_converted / max(1, n_total))
+    }])
+
+    # Append to CSV
+    REPORTS_DIR.mkdir(exist_ok=True, parents=True)
+    csv_path = REPORTS_DIR / "parse_report.csv"
+    if csv_path.exists():
+        report.to_csv(csv_path, mode="a", index=False, header=False, encoding="utf-8")
+    else:
+        report.to_csv(csv_path, index=False, encoding="utf-8")
+
+    update_manifest("reports", [str(csv_path)])
+    return out, report
+
+
+import pandas as pd
+
+def deduplicate_rows(df: pd.DataFrame, subset=None, keep="first") -> pd.DataFrame:
+    before = len(df)
+    if subset is None:
+        logger.info("deduplicate_rows: subset=None → desduplicando linha inteira")
+    out = df.drop_duplicates(subset=subset, keep=keep)
+    after = len(out)
+    logger.info(f"deduplicate_rows: removidas {before - after} duplicatas (de {before})")
+    return out
+
+
+import pandas as pd
+
+def summarize_text_features(df: pd.DataFrame, text_cols: list[str]) -> pd.DataFrame:
+    rows = []
+    for c in text_cols:
+        len_col = f"{c}_len"
+        wc_col  = f"{c}_word_count"
+        if len_col in df.columns and wc_col in df.columns:
+            rows.append({
+                "column": c,
+                "len_mean": float(df[len_col].mean()),
+                "len_median": float(df[len_col].median()),
+                "len_std": float(df[len_col].std() if hasattr(df[len_col], 'std') else 0.0),
+                "wc_mean": float(df[wc_col].mean()),
+                "wc_median": float(df[wc_col].median()),
+                "wc_std": float(df[wc_col].std() if hasattr(df[wc_col], 'std') else 0.0),
+                "null_ratio": float(df[c].isna().mean() if c in df.columns else 0.0)
+            })
+    summary = pd.DataFrame(rows)
+    if not summary.empty:
+        path = REPORTS_DIR / "text_features_summary.csv"
+        summary.to_csv(path, index=False, encoding="utf-8")
+        update_manifest("reports", [str(path)])
+        logger.info(f"text_features_summary salvo em {path}")
+    return summary

@@ -143,3 +143,54 @@ Um README detalhado dos utilitários está em `utils/UTILS_README.md`.
 
 - Licença: MIT (ajuste conforme sua necessidade).  
 - Template montado para estudos/portfólio e rápido *bootstrap* de projetos de dados.
+
+## 🚀 Getting Started
+
+### 1) Ambiente
+```bash
+python -m venv .venv
+# Linux/macOS
+source .venv/bin/activate
+# Windows (Powershell)
+# .venv\Scripts\Activate.ps1
+
+pip install -r requirements.txt  # ou instale as libs do seu stack padrão
+```
+
+### 2) Estrutura mínima
+Coloque seus arquivos de entrada em `data/raw/`. Exemplo:
+```
+data/raw/
+├── input.csv
+└── customers_2025-10-01.csv
+```
+
+### 3) Configurações
+- O arquivo `config/defaults.json` contém as flags padrão do pipeline.
+- Para ajustes locais (sem mexer nos defaults), crie `config/local.json`. Exemplo:
+```json
+{
+  "text_features": true,
+  "export_processed": true,
+  "scale_numeric": true,
+  "scaler": "minmax",
+  "normalize_categories": true
+}
+```
+> O projeto faz *merge* de `defaults.json` com `local.json` (local sobrepõe).
+
+### 4) Execução do N1 (Preparação de Dados)
+Abra e rode o notebook:
+```
+notebooks/01_data_preparation.ipynb
+```
+Saídas esperadas:
+- Intermediários em `data/interim/` (se habilitado)
+- Processados em `data/processed/` (se habilitado)
+- Relatórios e logs em `reports/`
+
+### 5) Dicas
+- Mantenha apenas uma **fonte canônica** de dados brutos em `data/raw/`.
+- Use nomes descritivos e com datas (`snake_case` + `YYYY-MM-DD`).
+
+---

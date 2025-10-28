@@ -301,35 +301,12 @@ def scale_numeric(df: pd.DataFrame, method: str = 'standard') -> Tuple[pd.DataFr
     return df, meta
 
 __all__ = [
-    'apply_encoding_and_scaling',
-    'basic_overview',
-    'build_calendar_from',
-    'deduplicate_rows',
-    'detect_date_candidates',
-    'detect_outliers_iqr',
-    'detect_outliers_zscore',
-    'encode_categories',
-    'encode_categories_safe',
-    'expand_date_features',
-    'extract_text_features',
-    'infer_format_from_suffix',
-    'infer_numeric_like',
-    'list_directory_files',
-    'load_csv',
-    'load_table_simple',
-    'merge_chain',
-    'missing_report',
-    'parse_dates_with_report',
-    'reduce_memory_usage',
-    'save_named_interims',
-    'save_parquet',
-    'save_table',
-    'scale_numeric',
-    'scale_numeric_safe',
-    'simple_impute',
-    'simple_impute_with_flags',
-    'strip_whitespace',
+    "load_csv", "save_parquet", "basic_overview", "reduce_memory_usage",
+    "infer_numeric_like", "strip_whitespace", "missing_report", "simple_impute",
+    "detect_outliers_iqr", "detect_outliers_zscore", "deduplicate_rows",
+    "encode_categories", "scale_numeric"
 ]
+
 # ==============================================
 # 📥 Ingestão flexível 
 # ==============================================

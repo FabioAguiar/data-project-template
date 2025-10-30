@@ -1,13 +1,23 @@
-# utils_data.py
+# -*- coding: utf-8 -*-
+"""Utilitários do projeto (I/O, pré-processamento, export, etc.)."""
+
+from __future__ import annotations
+
+# =============================================================================
+# Imports
+# =============================================================================
+import logging
+from logging import NullHandler
+
+# =============================================================================
+# Logger
+# =============================================================================
 logger = logging.getLogger(__name__)
 if not logger.handlers:
     logger.addHandler(NullHandler())
 logger.setLevel(logging.INFO)
 
-from __future__ import annotations
 from typing import Tuple, Dict, Any, List, Optional, Iterable
-import logging
-from logging import NullHandler
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -80,89 +90,118 @@ def infer_numeric_like(
     if blacklist:
         target_cols = [c for c in target_cols if c not in set(blacklist)]
 
-    for col in target_cols:
-        s = df[col].astype("string")  # mantém NA como <NA>
+def infer_numeric_like(
+    df: pd.DataFrame,
+    *,
+    columns: list[str] | None = None,
+    min_ratio: float = 0.9,
+    create_new_col_when_partial: bool = True,
+    blacklist: list[str] | None = None,
+    whitelist: list[str] | None = None
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Converte colunas 'numérico-compatíveis' (armazenadas como texto) para tipo numérico.
+
+    Parâmetros
+    ----------
+    df : pd.DataFrame
+        DataFrame de entrada.
+    columns : list[str] | None
+        Lista de colunas específicas para verificar. Se None, usa as colunas de tipo object/string/category.
+    min_ratio : float
+        Proporção mínima de valores convertíveis para realizar conversão.
+    create_new_col_when_partial : bool
+        Se True, cria <col>_num quando conversão for parcial; se False, converte in-place.
+    blacklist : list[str] | None
+        Colunas que nunca devem ser convertidas (ex.: IDs).
+    whitelist : list[str] | None
+        Colunas extras que devem ser consideradas mesmo que não sejam object/string.
+
+    Retorna
+    -------
+    (df_out, report_df)
+        df_out : DataFrame com colunas convertidas/novas.
+        report_df : DataFrame com relatório da conversão (coluna, razão, ação, total, convertidos).
+    """
+    df = df.copy()
+    bl = set(blacklist or [])
+    wl = set(whitelist or [])
+
+    # Seleção de colunas candidatas
+    if columns is not None:
+        candidates = [c for c in columns if c in df.columns]
+    else:
+        candidates = df.select_dtypes(include=["object", "string", "category"]).columns.tolist()
+
+    # Acrescenta whitelist e remove blacklist
+    candidates = list(dict.fromkeys([*candidates, *wl]))
+    candidates = [c for c in candidates if c not in bl]
+
+    rows = []
+    for col in candidates:
+        s = df[col].astype("string")
         s_stripped = s.str.strip()
 
-        # tratar vazios
-        non_null_mask = s_stripped.notna() & (s_stripped != "")
-        base_count = int(non_null_mask.sum())
+        notna = s_stripped.notna() & (s_stripped != "")
+        base_count = int(notna.sum())
         if base_count == 0:
-            report_rows.append({
-                "column": col, "action": "skip_empty", "ratio": 0.0,
-                "converted": 0, "non_convertible": 0, "examples": []
-            })
+            rows.append({"column": col, "ratio": 0.0, "action": "skip_empty", "converted": 0, "total": 0})
             continue
 
-        # detectar porcentagem (qualquer %) e marcar flag
-        has_percent = s_stripped.str.contains("%", regex=False, na=False).mean() > 0.0
-
-        # limpeza de símbolos monetários/espaços (preserva sinal e separadores)
-        cleaned = (
+        # Limpeza básica (remoção de símbolos, normalização decimal)
+        s_clean = (
             s_stripped
-            .str.replace(r"[ \t\r\n\$€£R\$]", "", regex=True)
-            .str.replace("\u00A0", "", regex=False)  # espaço não-quebrável
+            .str.replace(r"[\\s\\t\\r\\n\\$€£R\\$]", "", regex=True)
+            .str.replace("\\u00A0", "", regex=False)
         )
 
-        # heurística de separadores:
-        # casos principais: "1.234,56" (pt-BR) e "1,234.56" (en-US)
-        # Estratégia: remover separador de milhar e padronizar decimal como ponto.
-        # 1) se contém ponto e vírgula: assuma pt-BR ('.' milhar, ',' decimal)
-        has_dot = cleaned.str.contains(r"\.", na=False).mean() > 0
-        has_comma = cleaned.str.contains(r",", na=False).mean() > 0
+        has_dot = s_clean.str.contains(r"\\.", na=False).any()
+        has_comma = s_clean.str.contains(r",", na=False).any()
 
-        candidate = cleaned
+        candidate = s_clean
         if has_dot and has_comma:
-            # assume pt-BR
             candidate = candidate.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
         elif has_comma and not has_dot:
-            # pode ser decimal com vírgula; converte vírgula para ponto
             candidate = candidate.str.replace(",", ".", regex=False)
-        else:
-            # só ponto ou nenhum separador → segue
-            pass
 
-        # remove o símbolo de % no fim (se houver); conversão numérica
+        # Remove símbolos de porcentagem, tenta converter
         candidate_num = candidate.str.replace("%", "", regex=False)
         numeric = pd.to_numeric(candidate_num, errors="coerce")
-
-        # se for porcentagem, divide por 100
-        if has_percent:
-            numeric = numeric / 100.0
-
-        convertible = int(numeric[non_null_mask].notna().sum())
+        convertible = int(numeric[notna].notna().sum())
         ratio = convertible / base_count if base_count else 0.0
-        non_conv = base_count - convertible
-
-        # exemplos de não conversão (até 3)
-        examples = s_stripped[non_null_mask & numeric.isna()].dropna().unique().tolist()[:3]
 
         if convertible == 0:
             action = "skip_no_conversion"
         elif ratio >= min_ratio:
-            # aplica na coluna original
-            df[col] = numeric
-            action = "apply_overwrite"
+            df.loc[notna, col] = numeric[notna]
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+            action = "inplace_convert"
         else:
             if create_new_col_when_partial:
                 new_col = f"{col}_num"
-                df[new_col] = numeric
+                df[new_col] = pd.NA
+                df.loc[notna, new_col] = numeric[notna]
+                df[new_col] = pd.to_numeric(df[new_col], errors="coerce")
                 action = f"partial_to_{new_col}"
             else:
-                action = "partial_skip"
+                df.loc[notna, col] = numeric[notna]
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+                action = "partial_inplace"
 
-        report_rows.append({
+        rows.append({
             "column": col,
+            "ratio": float(ratio),
             "action": action,
-            "ratio": round(ratio, 4),
-            "converted": convertible,
-            "non_convertible": non_conv,
-            "examples": examples
+            "converted": int(convertible),
+            "total": int(base_count)
         })
 
-    report_df = pd.DataFrame(report_rows).sort_values(["action", "column"]).reset_index(drop=True)
-    logging.getLogger(__name__).info("[infer_numeric_like] summary:\n%s", report_df.to_string(index=False))
-    return df, report_df
+    report = pd.DataFrame(rows, columns=["column", "ratio", "action", "converted", "total"]).sort_values(
+        ["action", "column"], ascending=[False, True]
+    ).reset_index(drop=True)
+
+    logger.info(f"[infer_numeric_like] {len(candidates)} colunas verificadas. Conversões aplicadas: {report['action'].nunique()}")
+    return df, report
 
 
 def strip_whitespace(df: pd.DataFrame) -> pd.DataFrame:
@@ -338,7 +377,9 @@ __all__ = [
     'strip_whitespace',
     'summarize_text_features',
     'update_manifest',
-]
+
+        "build_target",
+        "ensure_target_from_config",]
 
 
 # ==============================================
@@ -962,6 +1003,7 @@ import json
 from pathlib import Path
 from datetime import datetime
 import joblib
+import unicodedata
 
 ARTIFACTS_DIR = Path("artifacts")
 REPORTS_DIR = Path("reports")
@@ -1209,3 +1251,131 @@ def summarize_text_features(df: pd.DataFrame, text_cols: list[str]) -> pd.DataFr
         update_manifest("reports", [str(path)])
         logger.info(f"text_features_summary salvo em {path}")
     return summary
+
+# =============================================================================
+# 🎯 Target helpers
+# =============================================================================
+def _strip_accents_txt(txt: str) -> str:
+    if txt is None:
+        return txt
+    try:
+        return ''.join(ch for ch in unicodedata.normalize('NFKD', str(txt)) if not unicodedata.combining(ch))
+    except Exception:
+        return str(txt)
+
+def build_target(
+    df: pd.DataFrame,
+    *,
+    source_col: str,
+    name: str = "target",
+    positive_values = ("yes","sim","y","true","1",1,True),
+    negative_values = ("no","não","nao","n","false","0",0,False),
+    to_dtype: str = "int",           # "int" | "bool"
+    drop_source: bool = False,
+    positive_label: str = "positive",
+    negative_label: str = "negative"
+) -> tuple[pd.DataFrame, str, dict | None, pd.DataFrame]:
+    """
+    Cria/atualiza a coluna alvo (target) a partir de uma coluna fonte.
+    - Normaliza strings (trim, lower, remove acentos) para comparar com listas de valores positivos/negativos.
+    - Mapeia para {1,0,NA} ou {True,False,<NA>} de acordo com `to_dtype`.
+    - Retorna (df, target_name, class_map, report_df).
+
+    class_map é útil para N2/N3 (exibição/explicação de rótulos). Pode ser None.
+    """
+    if source_col not in df.columns:
+        raise KeyError(f"[build_target] Coluna fonte '{source_col}' não encontrada no DataFrame.")
+
+    # normalização simples
+    s_raw = df[source_col].astype("string")
+    s_norm = s_raw.str.strip().str.lower().apply(_strip_accents_txt)
+
+    pos_set = set(_strip_accents_txt(v).strip().lower() for v in positive_values)
+    neg_set = set(_strip_accents_txt(v).strip().lower() for v in negative_values)
+
+    is_pos = s_norm.isin(pos_set)
+    is_neg = s_norm.isin(neg_set)
+
+    mapped = pd.Series(np.where(is_pos, 1, np.where(is_neg, 0, np.nan)), index=df.index)
+
+    if to_dtype == "bool":
+        target_series = mapped.replace({1: True, 0: False}).astype("boolean")
+    else:
+        target_series = mapped.astype("Int64")
+
+    df = df.copy()
+    df[name] = target_series
+
+    if drop_source and name != source_col:
+        df.drop(columns=[source_col], inplace=True, errors="ignore")
+
+    total = len(df)
+    na_count = int(df[name].isna().sum())
+    if to_dtype == "bool":
+        pos_count = int((df[name] == True).sum())
+        neg_count = int((df[name] == False).sum())
+    else:
+        pos_count = int((df[name] == 1).sum())
+        neg_count = int((df[name] == 0).sum())
+
+    report = pd.DataFrame([{
+        "source_col": source_col,
+        "target_col": name,
+        "dtype": to_dtype,
+        "positives": pos_count,
+        "negatives": neg_count,
+        "nulls": na_count,
+        "total": total
+    }])
+
+    # class_map opcional
+    if to_dtype == "int":
+        class_map = {negative_label: 0, positive_label: 1}
+    elif to_dtype == "bool":
+        class_map = {negative_label: False, positive_label: True}
+    else:
+        class_map = None
+
+    logger.info(f"[target] '{name}' criado de '{source_col}' → pos={pos_count} neg={neg_count} nulls={na_count} total={total}")
+    return df, name, class_map, report
+
+def ensure_target_from_config(
+    df: pd.DataFrame,
+    config: dict,
+    *,
+    verbose: bool = True
+) -> tuple[pd.DataFrame, str, dict | None, pd.DataFrame]:
+    """
+    Lê config['target_cfg'] e garante a criação do target no DataFrame.
+    Atualiza config['target_column'] com o nome final do target.
+
+    Retorna (df, target_name, class_map, report_df).
+    """
+    tgt_cfg = dict(config.get("target_cfg", {}))  # cópia
+
+    source_col     = tgt_cfg.get("source_col", "Churn")
+    target_name    = tgt_cfg.get("name", "target")
+    pos_values     = tgt_cfg.get("positive_values", ["yes","sim","y","true","1",1,True])
+    neg_values     = tgt_cfg.get("negative_values", ["no","não","nao","n","false","0",0,False])
+    to_dtype       = tgt_cfg.get("to_dtype", "int")
+    drop_source    = bool(tgt_cfg.get("drop_source", False))
+    positive_label = tgt_cfg.get("positive_label", "positive")
+    negative_label = tgt_cfg.get("negative_label", "negative")
+
+    df_out, tgt_name, class_map, rep = build_target(
+        df,
+        source_col=source_col,
+        name=target_name,
+        positive_values=pos_values,
+        negative_values=neg_values,
+        to_dtype=to_dtype,
+        drop_source=drop_source,
+        positive_label=positive_label,
+        negative_label=negative_label
+    )
+
+    config["target_column"] = tgt_name
+    if verbose:
+        print(f"[target] Definido target_column='{tgt_name}' (fonte='{source_col}')")
+
+    return df_out, tgt_name, class_map, rep

@@ -1,0 +1,17 @@
+column,before_sample,after_sample,changes,unique_before,unique_after
+Contract,"Month-to-month, One year, Two year","Month-To-Month, One Year, Two Year",7043,3,3
+PaymentMethod,"Electronic check, Mailed check, Bank transfer (automatic)","Electronic Check, Mailed Check, Bank Transfer (Automatic)",7043,4,4
+InternetService,"DSL, Fiber optic, No","Dsl, Fiber Optic, No",5517,3,3
+OnlineSecurity,"No, Yes, No internet service","No, Yes",1526,3,2
+OnlineBackup,"Yes, No, No internet service","Yes, No",1526,3,2
+DeviceProtection,"No, Yes, No internet service","No, Yes",1526,3,2
+TechSupport,"No, Yes, No internet service","No, Yes",1526,3,2
+StreamingTV,"No, Yes, No internet service","No, Yes",1526,3,2
+StreamingMovies,"No, Yes, No internet service","No, Yes",1526,3,2
+MultipleLines,"No phone service, No, Yes","No, Yes",682,3,2
+gender,"Female, Male","Female, Male",0,2,2
+Partner,"Yes, No","Yes, No",0,2,2
+Dependents,"No, Yes","No, Yes",0,2,2
+PhoneService,"No, Yes","No, Yes",0,2,2
+PaperlessBilling,"Yes, No","Yes, No",0,2,2
+Churn,"No, Yes","No, Yes",0,2,2

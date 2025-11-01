@@ -2,46 +2,33 @@
   "infer_types": true,
   "cast_numeric_like": true,
   "strip_whitespace": true,
-
   "handle_missing": true,
   "missing_strategy": "simple",
-
   "detect_outliers": true,
   "outlier_method": "iqr",
-
+  "outliers": {
+    "cols": null,
+    "exclude_cols": ["customerID"],
+    "exclude_binaries": true,
+    "iqr_factor": 1.5,
+    "z_threshold": 3.0
+  },
   "deduplicate": true,
   "deduplicate_subset": null,
   "deduplicate_keep": "first",
   "deduplicate_log": true,
   "deduplicate_log_filename": "duplicates.csv",
-
   "encode_categoricals": true,
   "encoding_type": "onehot",
-
   "scale_numeric": false,
   "scaler": "standard",
-
   "date_features": true,
-  "text_features": false,
+  "text_features": true,
   "feature_engineering": true,
-
-  "normalize_categories": true,
-
   "export_interim": true,
+  "normalize_categories": true,
   "export_processed": true,
-
-  "data_interim_file": "data/interim/interim.parquet",
-  "data_processed_file": "data/processed/processed.parquet",
-  "meta_file": "artifacts/metadata/dataset_meta.json",
-
-  "target_cfg": {
-    "source_col": "Churn",
-    "name": "target",
-    "positive_values": ["Yes", "Sim", "Y", "True", "1", 1, true],
-    "negative_values": ["No", "Não", "Nao", "N", "False", "0", 0, false],
-    "to_dtype": "int",
-    "drop_source": false,
-    "positive_label": "Churn=Yes",
-    "negative_label": "Churn=No"
+  "reporting": {
+    "manifest_enabled": true
   }
 }

@@ -83,8 +83,9 @@ __all__ = [
     # conveniências
     "set_random_seed", "set_display",
     # versão
-    "UTILS_DATA_VERSION",
-]
+    "UTILS_DATA_VERSION", 
+    "apply_outlier_flags"
+, "parse_dates_with_report_cfg", "expand_date_features_plus"]
 
 UTILS_DATA_VERSION = "1.2.2-merged"
 
@@ -211,6 +212,80 @@ def save_report_df(df: pd.DataFrame, rel_path: Union[str, Path], root: Optional[
     record_step("save_report_df", {"path": str(path), "rows": len(df)})
     logger.info(f"[report] salvo: {path} ({len(df)} linhas)")
     return path
+
+# -----------------------------------------------------------------------------
+# Diretório padrão de artefatos (relatórios, saídas intermediárias, etc.)
+# -----------------------------------------------------------------------------
+def get_artifacts_dir(subdir: str | None = None) -> Path:
+    """
+    Retorna o diretório de artefatos do projeto (`reports/artifacts`), garantindo sua existência.
+    
+    Parâmetros:
+      - subdir (opcional): nome de subpasta dentro de artifacts (ex.: "outliers" ou "calendar")
+
+    Exemplo:
+      >>> path = get_artifacts_dir("calendar")
+      >>> print(path)
+      C:/Users/fabio/Projetos DEV/data projects/data-project-template/reports/artifacts/calendar
+    """
+    try:
+        root = ensure_project_root()
+    except Exception:
+        root = Path.cwd()
+
+    base = root / "reports" / "artifacts"
+    ensure_dir(base)
+
+    if subdir:
+        base = base / subdir
+        ensure_dir(base)
+
+    try:
+        logger.info(f"[path] artifacts_dir -> {base}")
+    except Exception:
+        pass
+
+    return base
+
+# -----------------------------------------------------------------------------
+# Diretório padrão de artefatos (relatórios, saídas intermediárias, etc.)
+# -----------------------------------------------------------------------------
+def get_artifacts_dir(subdir: str | None = None) -> Path:
+    """
+    Retorna o diretório de artefatos do projeto (`reports/artifacts`), garantindo sua existência.
+
+    Parâmetros:
+      - subdir (opcional): nome de subpasta dentro de artifacts (ex.: "outliers" ou "calendar")
+
+    Exemplo:
+      >>> path = get_artifacts_dir("calendar")
+      >>> print(path)
+      C:/Users/fabio/Projetos DEV/data projects/data-project-template/reports/artifacts/calendar
+    """
+    # fallback local para ensure_dir caso ainda não esteja definido
+    def _ensure_dir(path: Path) -> Path:
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    try:
+        root = ensure_project_root()
+    except Exception:
+        root = Path.cwd()
+
+    base = root / "reports" / "artifacts"
+    _ensure_dir(base)
+
+    if subdir:
+        base = base / subdir
+        _ensure_dir(base)
+
+    try:
+        logger.info(f"[path] artifacts_dir -> {base}")
+    except Exception:
+        pass
+
+    return base
+
 
 def save_text(text: str, rel_path: Union[str, Path], root: Optional[Path] = None) -> Path:
     root = root or ensure_project_root()
@@ -821,6 +896,7 @@ def scale_numeric_safe(df: pd.DataFrame, exclude_cols: Optional[Sequence[str]] =
 # -----------------------------------------------------------------------------
 _DEFAULT_DATE_REGEX = [r"(?:^|_)(date|data|dt)(?:$|_)", r"(?:_at$)", r"(?:_date$)"]
 
+
 def detect_date_candidates(df: pd.DataFrame, regex_list: Optional[Sequence[str]] = None) -> List[str]:
     regex_list = list(regex_list) if regex_list else _DEFAULT_DATE_REGEX
     out: List[str] = []
@@ -937,13 +1013,80 @@ def build_target(df: pd.DataFrame, config: Mapping[str, Any]) -> Tuple[pd.DataFr
     meta = {"name": name, "rule": rule}
     return df, meta
 
-def ensure_target_from_config(df: pd.DataFrame, config: Mapping[str, Any]) -> Tuple[pd.DataFrame, Optional[str]]:
-    tcfg = config.get("target", {})
-    name = tcfg.get("name", "target")
-    if name in df.columns:
-        return df, name
-    df2, meta = build_target(df, config)
-    return df2, meta.get("name")  # type: ignore
+# -----------------------------------------------------------------------------
+# Criação e verificação do target (variável alvo)
+# -----------------------------------------------------------------------------
+def ensure_target_from_config(df: pd.DataFrame, config: dict, verbose: bool = False):
+    """
+    Garante a existência de uma coluna target conforme configuração.
+
+    Retorna:
+      df, target_name, class_map, report_df
+    """
+    import pandas as pd
+
+    # Ler parâmetros do config
+    tgt_cfg = config.get("target", {})
+    target_name = tgt_cfg.get("name", "target")
+    positive = tgt_cfg.get("positive", None)
+    negative = tgt_cfg.get("negative", None)
+    src_col = tgt_cfg.get("source", None)
+
+    # Caso já exista no dataset
+    if target_name in df.columns:
+        if verbose:
+            print(f"[target] Coluna '{target_name}' já existe — nenhuma ação necessária.")
+        tgt_report = pd.DataFrame({
+            "target": [target_name],
+            "status": ["já existe"],
+            "source": [src_col or target_name],
+            "positive": [positive],
+            "negative": [negative]
+        })
+        class_map = {1: positive, 0: negative}
+        return df, target_name, class_map, tgt_report
+
+    # Se precisar derivar a coluna a partir de outra
+    if src_col and src_col in df.columns:
+        if verbose:
+            print(f"[target] Criando '{target_name}' a partir da coluna '{src_col}'.")
+
+        series = df[src_col]
+
+        if positive is not None and negative is not None:
+            df[target_name] = series.map({positive: 1, negative: 0})
+        elif series.dtype == "bool":
+            df[target_name] = series.astype(int)
+        else:
+            # fallback genérico: mapeia valores únicos
+            unique_vals = sorted(series.dropna().unique())
+            mapping = {val: i for i, val in enumerate(unique_vals)}
+            df[target_name] = series.map(mapping)
+            if verbose:
+                print(f"[target] Mapeamento automático: {mapping}")
+
+        class_map = {1: positive, 0: negative} if positive and negative else mapping
+        status = "criado"
+    else:
+        if verbose:
+            print("[target] Nenhuma coluna de origem encontrada — criando target nulo.")
+        df[target_name] = pd.NA
+        class_map = {}
+        status = "não criado"
+
+    tgt_report = pd.DataFrame({
+        "target": [target_name],
+        "status": [status],
+        "source": [src_col],
+        "positive": [positive],
+        "negative": [negative]
+    })
+
+    if verbose:
+        print(f"[target] Conclusão: {status} ({target_name})")
+
+    return df, target_name, class_map, tgt_report
+
 
 def apply_encoding_and_scaling(df: pd.DataFrame,
                                config: Mapping[str, Any]) -> Tuple[pd.DataFrame, Dict[str, Any]]:
@@ -1082,3 +1225,426 @@ def md_to_pdf(md_text: str, out_path: Union[str, Path], engine: str = "weasyprin
         raise RuntimeError(f"Falha no pandoc: {cp.stderr}")
     tmp_md.unlink(missing_ok=True)
     return out_path
+
+
+def apply_outlier_flags(
+    df: pd.DataFrame,
+    config: Optional[Mapping[str, Any]] = None,
+    *,
+    method: Optional[str] = None,           # "iqr" | "zscore" | None -> lê do config
+    iqr_factor: Optional[float] = None,     # multiplicador do IQR (ex.: 1.5 ou 3.0)
+    z_threshold: Optional[float] = None,    # z-score threshold (ex.: 3.0)
+    cols: Optional[Sequence[str]] = None,   # se None, usa numéricas
+    exclude_cols: Optional[Sequence[str]] = None,
+    exclude_binaries: Optional[bool] = None,
+    flag_suffix: str = "_is_outlier",
+    persist: Optional[bool] = None,
+    persist_relpath: Optional[str] = None,  # caminho relativo em reports/
+    root: Optional[Path] = None,
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """
+    Cria colunas booleanas <col>_is_outlier para cada coluna indicada (ou numéricas) a partir de
+    um *mask* de outliers calculado por IQR ou z-score. Lê preferências do `config` atual:
+      - config["detect_outliers"] (bool)
+      - config["outlier_method"] ("iqr"|"zscore")
+      - config["outliers"] dict com:
+          - cols (lista ou null)            -> restringe a colunas específicas
+          - exclude_cols (lista)            -> ignora colunas
+          - exclude_binaries (bool)         -> omite colunas {0,1} e {True,False}
+          - iqr_factor (float)
+          - z_threshold (float)
+          - persist_summary (bool)          -> salva CSV de resumo
+          - persist_relpath (str)           -> ex: "outliers/summary.csv"
+
+    Retorna (df_modificado, info_dict). O df retorna *cópia* com flags adicionadas.
+    """
+    # --- ler config com retrocompatibilidade ---
+    cfg = dict(config or {})
+    out_cfg = dict(cfg.get("outliers", {}))
+
+    enabled = bool(cfg.get("detect_outliers", True))
+    if not enabled:
+        return df.copy(), {
+            "applied": False,
+            "reason": "detect_outliers desabilitado no config",
+            "flag_cols": [],
+            "counts": {},
+        }
+
+    method = (method or cfg.get("outlier_method") or out_cfg.get("method") or "iqr").lower()
+    iqr_k = float(iqr_factor if iqr_factor is not None else out_cfg.get("iqr_factor", 1.5))
+    z_thr = float(z_threshold if z_threshold is not None else out_cfg.get("z_threshold", 3.0))
+    user_cols = cols if cols is not None else out_cfg.get("cols")
+    exc_cols = set((out_cfg.get("exclude_cols", []) or []) + list(exclude_cols or []))
+    exc_bin = bool(out_cfg.get("exclude_binaries", True) if exclude_binaries is None else exclude_binaries)
+
+    persist_flag = bool(out_cfg.get("persist_summary", False) if persist is None else persist)
+    persist_rel = persist_relpath or out_cfg.get("persist_relpath", "outliers/summary.csv")
+
+    # --- escolher colunas ---
+    if user_cols is None:
+        cols_work = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+    else:
+        cols_work = [c for c in user_cols if c in df.columns]
+
+    # excluir colunas removidas e binárias se solicitado
+    cols_work = [c for c in cols_work if c not in exc_cols]
+    if exc_bin:
+        def _is_binary(s: pd.Series) -> bool:
+            vals = set(pd.Series(s.dropna().unique()).tolist())
+            return vals.issubset({0,1}) or vals.issubset({True, False})
+        cols_work = [c for c in cols_work if not _is_binary(df[c])]
+
+    # --- calcula máscara de outliers ---
+    if method == "iqr":
+        mask = detect_outliers_iqr(df, cols=cols_work, k=iqr_k)
+    elif method in {"z", "zscore", "z-score"}:
+        mask = detect_outliers_zscore(df, cols=cols_work, z=z_thr)
+        method = "zscore"
+    else:
+        # fallback para iqr
+        mask = detect_outliers_iqr(df, cols=cols_work, k=iqr_k)
+        method = "iqr"
+
+    # --- adiciona colunas flag ---
+    out = df.copy()
+    flag_cols: list[str] = []
+    counts: Dict[str, int] = {}
+    for c in mask.columns:
+        flag_name = f"{c}{flag_suffix}"
+        out[flag_name] = mask[c].astype(bool)
+        flag_cols.append(flag_name)
+        counts[flag_name] = int(mask[c].sum())
+
+    info: Dict[str, Any] = {
+        "applied": True,
+        "method": method,
+        "iqr_factor": iqr_k,
+        "z_threshold": z_thr,
+        "scanned_cols": cols_work,
+        "flag_cols": flag_cols,
+        "created_flags": len(flag_cols),
+        "counts": counts,
+        "persisted": None,
+    }
+
+    # --- persistência opcional do resumo ---
+    if persist_flag and len(flag_cols) > 0:
+        # salva em reports/<persist_rel>
+        if persist_rel is None or str(persist_rel).strip() == "":
+            persist_rel = "outliers/summary.csv"
+        report_df = (
+            pd.Series(counts, name="outliers_count")
+            .sort_values(ascending=False)
+            .to_frame()
+            .reset_index()
+            .rename(columns={"index": "flag"})
+        )
+        try:
+            save_report_df(report_df, persist_rel, root=root)
+            info["persisted"] = {"report_relpath": persist_rel, "rows": int(len(report_df))}
+        except Exception as e:
+            logger.warning(f"[apply_outlier_flags] falha ao persistir '{persist_rel}': {e}")
+
+    logger.info(f"[apply_outlier_flags] flags criadas: {len(flag_cols)} | método={method}")
+    return out, info
+
+# -----------------------------------------------------------------------------
+# Remoção de duplicidades
+# -----------------------------------------------------------------------------
+def deduplicate_rows(
+    df: pd.DataFrame,
+    subset: Optional[Sequence[str]] = None,
+    keep: str = "first",
+    config: Optional[Dict[str, Any]] = None,
+) -> pd.DataFrame:
+    """
+    Remove linhas duplicadas do DataFrame.
+
+    Parâmetros:
+      - subset: lista de colunas a considerar (None = todas)
+      - keep: 'first' (mantém a 1ª), 'last' (mantém a última) ou False (remove todas as duplicadas)
+      - config: dicionário de configuração (opcional) com chaves:
+          {
+            "deduplicate": {
+              "subset": ["col1", "col2"],  # colunas de referência
+              "keep": "first"
+            }
+          }
+
+    Retorna:
+      df sem duplicadas.
+    """
+    df = df.copy()
+
+    # Preferências do config
+    dedup_cfg = (config or {}).get("deduplicate", {}) if isinstance(config, dict) else {}
+    subset = dedup_cfg.get("subset", subset)
+    keep = dedup_cfg.get("keep", keep)
+
+    n_before = len(df)
+    df = df.drop_duplicates(subset=subset, keep=keep)
+    n_after = len(df)
+    removed = n_before - n_after
+
+    logger.info(
+        f"[deduplicate_rows] Removidas {removed} duplicadas "
+        f"({n_before} → {n_after}) | subset={subset or 'ALL'} | keep={keep}"
+    )
+
+    return df
+
+
+
+# -----------------------------------------------------------------------------
+# Tratamento de Datas (versão com config dict): parsing com relatório + colunas parseadas
+# -----------------------------------------------------------------------------
+def parse_dates_with_report_cfg(
+    df: pd.DataFrame,
+    cfg: Optional[Mapping[str, Any]] = None
+) -> Tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+    """
+    Variante que lê um dicionário de configuração (cfg) e retorna:
+      (df_convertido, report_df, parsed_cols)
+
+    cfg:
+      - detect_regex: str regex para auto-detecção (default: r"(date|data|dt_|_dt$|_date$)")
+      - explicit_cols: list[str] colunas explícitas (prioridade sobre regex)
+      - dayfirst: bool (default False)
+      - utc: bool (default False)
+      - formats: list[str] formatos strftime (ex.: ["%d/%m/%Y", "%Y-%m-%d"]); se vazio, usa auto
+      - min_ratio: float entre 0 e 1 (default 0.80) -> taxa mínima de parsing aceitável
+      - report_path: str|Path opcional para persistir o relatório em reports/
+
+    Observações:
+      - Não altera a função existente parse_dates_with_report; é uma variante complementar.
+    """
+    cfg = dict(cfg or {})
+    regex = cfg.get("detect_regex", r"(date|data|dt_|_dt$|_date$)")
+    explicit = list(cfg.get("explicit_cols", []) or [])
+    dayfirst = bool(cfg.get("dayfirst", False))
+    utc = bool(cfg.get("utc", False))
+    fmts = list(cfg.get("formats", []) or [])
+    min_ratio = float(cfg.get("min_ratio", 0.80))
+    report_path = cfg.get("report_path", "date_parse_report.csv")
+
+    # Seleciona colunas candidatas
+    candidates: list[str] = []
+    for c in explicit:
+        if c in df.columns:
+            candidates.append(c)
+    if not candidates:
+        pattern = re.compile(regex, flags=re.IGNORECASE)
+        candidates = [c for c in df.columns if pattern.search(str(c))]
+
+    out = df.copy()
+    results = []
+    parsed_cols: list[str] = []
+
+    for col in candidates:
+        raw = out[col]
+        n = int(raw.notna().sum())
+        if n == 0:
+            results.append({"column": col, "non_null": 0, "parsed": 0, "ratio": 0.0, "method": "skipped_empty", "format": None})
+            continue
+
+        chosen_series = None
+        chosen_fmt = None
+        chosen_method = "auto"
+
+        if fmts:
+            for fmt in fmts:
+                try:
+                    tmp = pd.to_datetime(raw, format=fmt, errors="coerce", dayfirst=dayfirst, utc=utc)
+                    ok = int(tmp.notna().sum())
+                    if ok / max(n, 1) >= min_ratio:
+                        chosen_series = tmp
+                        chosen_fmt = fmt
+                        chosen_method = "format"
+                        break
+                except Exception:
+                    continue
+
+        if chosen_series is None:
+            tmp = pd.to_datetime(raw, errors="coerce", dayfirst=dayfirst, utc=utc)
+            chosen_series = tmp
+            chosen_fmt = None
+            chosen_method = "auto"
+
+        ok = int(chosen_series.notna().sum())
+        ratio = ok / max(n, 1)
+
+        results.append({
+            "column": col,
+            "non_null": n,
+            "parsed": ok,
+            "ratio": round(ratio, 4),
+            "method": chosen_method,
+            "format": chosen_fmt
+        })
+
+        if ratio >= min_ratio:
+            out[col] = chosen_series
+            parsed_cols.append(col)
+
+    report_df = pd.DataFrame(results, columns=["column","non_null","parsed","ratio","method","format"]).sort_values("column")
+
+    # Persistência opcional usando helper do módulo (se existir)
+    try:
+        if report_path:
+            save_report_df(report_df, report_path)
+    except Exception:
+        pass
+
+    try:
+        logger.info(f"[dates/cfg] parsed_cols={parsed_cols} (min_ratio={min_ratio})")
+    except Exception:
+        pass
+
+    return out, report_df, parsed_cols
+
+
+
+# -----------------------------------------------------------------------------
+# Expansão de features de data (versão estendida com prefix_mode e conjunto de features)
+# -----------------------------------------------------------------------------
+def expand_date_features_plus(
+    df: pd.DataFrame,
+    date_cols: Sequence[str],
+    *,
+    features: Sequence[str] = ("year","month","day","dayofweek","quarter","week","is_month_start","is_month_end"),
+    prefix_mode: str = "auto"  # "auto" -> <col>_<feature>, "plain" -> <feature>
+) -> list[str]:
+    """
+    Cria colunas derivadas a partir de colunas datetime.
+
+    features suportados:
+      - year, month, day, dayofweek, quarter, week, is_month_start, is_month_end
+
+    Retorna:
+      lista de nomes das colunas criadas
+    """
+    created: list[str] = []
+    for col in date_cols:
+        if col not in df.columns or not pd.api.types.is_datetime64_any_dtype(df[col]):
+            continue
+
+        for f in features:
+            out_name = f"{col}_{f}" if prefix_mode == "auto" else f
+            try:
+                if f == "year":
+                    df[out_name] = df[col].dt.year
+                elif f == "month":
+                    df[out_name] = df[col].dt.month
+                elif f == "day":
+                    df[out_name] = df[col].dt.day
+                elif f == "dayofweek":
+                    df[out_name] = df[col].dt.dayofweek
+                elif f == "quarter":
+                    df[out_name] = df[col].dt.quarter
+                elif f == "week":
+                    try:
+                        df[out_name] = df[col].dt.isocalendar().week.astype(int)
+                    except Exception:
+                        df[out_name] = df[col].dt.week
+                elif f == "is_month_start":
+                    df[out_name] = df[col].dt.is_month_start
+                elif f == "is_month_end":
+                    df[out_name] = df[col].dt.is_month_end
+                else:
+                    continue
+                created.append(out_name)
+            except Exception:
+                # Ignora feature específica se a operação falhar
+                continue
+
+    try:
+        logger.info(f"[dates/features+] criadas: {len(created)} -> {created[:8]}{'...' if len(created)>8 else ''}")
+    except Exception:
+        pass
+
+    return created
+
+
+# -----------------------------------------------------------------------------
+# Tratamento de Texto — extração de features básicas
+# -----------------------------------------------------------------------------
+
+def extract_text_features(
+    df: pd.DataFrame,
+    *,
+    lower: bool = True,
+    strip_collapse_ws: bool = True,
+    keywords: list[str] | None = None,
+    blacklist: list[str] | None = None,
+    export_summary: bool = True,
+    summary_dir: str | Path | None = None
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Extrai métricas básicas de colunas textuais (string/object) e gera relatório de texto.
+
+    Parâmetros:
+      - lower: converte para minúsculas
+      - strip_collapse_ws: remove espaços extras
+      - keywords: lista de palavras-chave a serem contadas
+      - blacklist: colunas a ignorar
+      - export_summary: salva CSV de resumo (True/False)
+      - summary_dir: caminho para salvar o relatório (Path ou string)
+
+    Retorna:
+      (DataFrame transformado, DataFrame resumo)
+    """
+    df_out = df.copy()
+    text_cols = df_out.select_dtypes(include="object").columns.tolist()
+    blacklist = set(blacklist or [])
+    keywords = list(keywords or [])
+    cols_proc = [c for c in text_cols if c not in blacklist]
+
+    summary = []
+
+    for col in cols_proc:
+        s = df_out[col].astype(str)
+
+        if lower:
+            s = s.str.lower()
+        if strip_collapse_ws:
+            s = s.str.replace(r"\s+", " ", regex=True).str.strip()
+
+        df_out[col] = s
+
+        # features básicas
+        df_out[f"{col}_len"] = s.str.len()
+        df_out[f"{col}_word_count"] = s.str.split().apply(len)
+
+        col_summary = {
+            "column": col,
+            "non_null": int(s.notna().sum()),
+            "avg_len": round(s.str.len().mean(), 2),
+            "avg_words": round(s.str.split().apply(len).mean(), 2),
+        }
+
+        # contagem de keywords
+        for kw in keywords:
+            kw_flag = f"{col}_has_{kw}"
+            df_out[kw_flag] = s.str.contains(rf"\b{kw}\b", regex=True, na=False)
+            col_summary[f"kw_{kw}_count"] = int(df_out[kw_flag].sum())
+
+        summary.append(col_summary)
+
+    # construir DataFrame resumo
+    text_summary = pd.DataFrame(summary)
+    if not text_summary.empty:
+        text_summary = text_summary.sort_values("column").reset_index(drop=True)
+
+    # persistência opcional
+    if export_summary and summary_dir is not None:
+        summary_dir = Path(summary_dir)
+        summary_dir.mkdir(parents=True, exist_ok=True)
+        out_path = summary_dir / "text_features_summary.csv"
+        text_summary.to_csv(out_path, index=False, encoding="utf-8-sig")
+        try:
+            logger.info(f"[text] resumo salvo em: {out_path} ({len(text_summary)} colunas)")
+        except Exception:
+            pass
+
+    return df_out, text_summary

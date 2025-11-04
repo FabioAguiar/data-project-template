@@ -9,21 +9,20 @@ Inclui pipeline de preparação, utilitários prontos em `utils/`, configuraçã
 
 ```
 data-project-template/
-├── artifacts/        # saídas auxiliares do projeto (dim_date, métricas, etc.)
+├── data/             # camadas de dados (bruto → intermediário → processado)
+│   ├── raw/          # dados originais
+│   ├── interim/      # intermediários após limpeza e tratamento
+│   └── processed/    # dataset final para modelagem
+├── artifacts/        # metadados, tabelas derivadas (ex.: dim_date) e modelos exportados
 ├── config/           # defaults.json (obrigatório) e local.json (opcional, overrides)
 ├── dashboards/       # arquivos de dashboards (Power BI, etc.)
-├── data/
-│   ├── raw/          # dados brutos 
-│   ├── interim/      # camadas intermediárias após limpeza/padrões
-│   └── processed/    # dataset final para modelagem/visualização
-├── notebooks/        # Jupyter Notebooks do fluxo (N1…Nn)
+├── notebooks/        # Jupyter Notebooks do fluxo (N1, N2, N3…)
 ├── prints/           # screenshots/figuras para documentação
 ├── reports/          # logs, relatórios CSV/HTML, PDF e manifest.json
 ├── utils/            # funções reutilizáveis (utils_data.py, etc.)
 ├── .gitignore
 └── README.md
 ```
-
 
 ---
 
@@ -80,9 +79,27 @@ data-project-template/
       `encode_categories_safe` (one-hot/ordinal com exclusões e alerta de cardinalidade)  
       e `scale_numeric_safe` (standard/minmax apenas em contínuas, se desejado).
 
-13. **Exportação de Artefatos**  
-    - `save_table` respeita extensão (`.csv`/`.parquet`) para **interim**/**processed**.  
-    - Geração de `reports/manifest.json` com shape, colunas e metadados de encode/scale.
+13. **Exportação de Artefatos e Metadados**
+    - Salva **datasets intermediários e finais** (`data/interim/`, `data/processed/`).
+    - Gera **meta.json** enriquecido com:
+      - target alinhado ao `config.target.name`
+      - mapeamento de classes (`class_map`)
+      - tipos de dados (`dtypes`)
+      - contagem de linhas (`rows`)
+    - Cria `manifest.json` em `reports/artifacts/export/` com:
+      - seed, memória, shape, flags de imputação/outliers e caminhos exportados.
+
+14. **Resumo Final de Sanidade**
+    - Valida presença dos artefatos exportados (interim, processed, meta, manifest).
+    - Mostra o shape final e confirma o target ativo.
+    - Exemplo de saída:
+      ```
+      ✅ N1 concluído
+      Shape: (7043, 28)
+      Target: Churn
+      Meta: artifacts/metadata/dataset_meta.json
+      Manifest: reports/artifacts/export/manifest.json
+      ```
 
 ---
 
@@ -99,7 +116,8 @@ data-project-template/
   - `date_features`, `text_features`, `feature_engineering`  
   - `encode_categoricals` + `encoding_type`  
   - `scale_numeric` + `scaler`  
-  - `export_interim`, `export_processed`
+  - `export_interim`, `export_processed`  
+  - `random_seed`: controla reprodutibilidade entre notebooks N1–N3
 
 > As configurações ativas são registradas no log e no `manifest.json`.
 
@@ -182,12 +200,13 @@ data/raw/
 ### 4) Execução do N1 (Preparação de Dados)
 Abra e rode o notebook:
 ```
-notebooks/01_data_preparation.ipynb
+notebooks/01_data_preparation_template.ipynb
 ```
 Saídas esperadas:
 - Intermediários em `data/interim/` (se habilitado)
-- Processados em `data/processed/` (se habilitado)
-- Relatórios e logs em `reports/`
+- Processados em `data/processed/`
+- Metadados em `artifacts/metadata/dataset_meta.json`
+- Manifesto em `reports/artifacts/export/manifest.json`
 
 ### 5) Dicas
 - Mantenha apenas uma **fonte canônica** de dados brutos em `data/raw/`.

@@ -1,236 +1,214 @@
-# 🧰 utils/ — Utility Toolkit for Data Projects
+# 🧰 `utils/` — Utility Toolkit for Data Projects (v1.2.2-merged)
 
-Este diretório contém **funções utilitárias** usadas pelos notebooks do template para **ingestão**, **limpeza**, **engenharia de atributos**, **codificação**, **escala**, **datas**, **texto**, **catálogo de DataFrames** e **exportação**.  
-O módulo principal é **`utils_data.py`**.
+Coleção de utilitários usada pelos notebooks (N1→N3) para **ingestão**, **limpeza**, **engenharia de atributos**, **datas**, **texto**, **codificação/escala**, **catálogo de DataFrames**, **artefatos** e **manifest**.  
+Módulo principal: **`utils/utils_data.py`** (versão `UTILS_DATA_VERSION = "1.2.2"`).
 
-> Dica: importar funções específicas conforme a etapa do notebook, por exemplo:
->
+> Import típico no notebook:
 > ```python
-> from utils.utils_data import (
->     load_table_simple, basic_overview, strip_whitespace, infer_numeric_like,
->     simple_impute_with_flags, detect_outliers_iqr, deduplicate_rows,
->     encode_categories_safe, scale_numeric_safe, apply_encoding_and_scaling,
->     parse_dates_with_report, expand_date_features, build_calendar_from,
->     extract_text_features, TableStore, save_table, save_named_interims,
->     list_directory_files
-> )
+> import importlib, utils.utils_data as ud
+> importlib.reload(ud)
+> from utils.utils_data import TableStore
 > ```
 
 ---
 
-## 📦 Ingestão & Exportação
+## 🧭 Descoberta de raiz, config e manifest
 
-### `load_csv(filepath, **read_kwargs) -> pd.DataFrame`
-Carrega CSV com logging padronizado. Aceita os mesmos parâmetros do `pandas.read_csv` (ex.: `sep`, `encoding`, `low_memory`).
+### `ensure_project_root() -> Path`
+- Sobe a árvore até encontrar `config/defaults.json` e fixa a **raiz do projeto**.
+- Injeta `utils/` no `sys.path` (para imports estáveis nos notebooks em qualquer subpasta).
+- Emite log: `PROJECT_ROOT: <path>`.
 
-### `save_parquet(df, filepath) -> None`
-Salva um DataFrame em **Parquet**. Cria diretórios pais automaticamente.
+### `load_config(base_abs=None, local_abs=None) -> dict`
+- Carrega `config/defaults.json` e faz *merge* profundo com `config/local.json` (se existir).
 
-### `infer_format_from_suffix(path) -> str`
-Deduz o formato do arquivo a partir da extensão (`csv`/`parquet`).
+### Manifest helpers
+- `load_manifest()`, `save_manifest()`, `update_manifest()`
+- `record_step(name, details=None)` e *context manager* `with_step(name, details=None)` para auditar etapas no tempo.
 
-### `load_table_simple(path, fmt=None, read_opts=None) -> pd.DataFrame`
-Leitura simples e consistente de CSV/Parquet. Se `fmt=None`, detecta pelo sufixo. Útil na etapa **📥 Ingestão & Visão Rápida**.
-
-### `save_table(df, path) -> None`
-Salva respeitando a **extensão do caminho**: se terminar em `.csv`, grava CSV; se `.parquet`, grava Parquet.
-
-### `save_named_interims(named_frames, base_dir, fmt="parquet") -> None`
-Salva **múltiplos** DataFrames nomeados em `data/interim/` usando a convenção `<nome>_interim.<fmt>`.
-
-### `list_directory_files(dir_path, pattern="*", sort_by="name") -> pd.DataFrame`
-Lista arquivos de um diretório (nome, extensão, tamanho e data de modificação). Útil para configurar rapidamente o bloco `SOURCES`.
+### Artefatos e relatórios
+- `get_artifacts_dir(subdir=None)` → **`reports/artifacts[/<subdir>]`** (garante diretório). **Use isto no N1**.
+- `save_artifact(obj, name)` / `load_artifact(name)` → `.joblib` em `artifacts/` (modelos, encoders, etc.).
+- `save_report_df(df, rel_path)` e `save_text(text, rel_path)` gravam em `reports/<rel_path>`.
 
 ---
 
-## 🔎 Perfil & Otimização
+## 📥 Ingestão & 📤 Exportação
 
-### `basic_overview(df) -> dict`
-Retorna shape, colunas, dtypes, memória e contagem de nulos (para log/manifest).
-
-### `reduce_memory_usage(df) -> pd.DataFrame`
-Faz **downcast** de inteiros e floats para reduzir uso de memória. Loga antes/depois.
-
-### `strip_whitespace(df) -> pd.DataFrame`
-Remove espaços excedentes em colunas textuais (`object`).
-
-### `infer_numeric_like(df, columns=None, min_ratio=0.9, create_new_col_when_partial=True, blacklist=None, whitelist=None) -> (df, report_df)`
-Converte strings “parecidas com número” em valores numéricos, com auditoria:
-- Detecta porcentagens (`%`) e normaliza separadores (`1.234,56` ↔ `1,234.56`).
-- Se **`ratio >= min_ratio`**, sobrescreve a coluna; caso parcial, cria `<col>_num` (se habilitado).
-- Retorna um **relatório** com `column`, `action`, `ratio`, `converted`, `non_convertible`, `examples`.
+- `infer_format_from_suffix(path) -> "csv"|"parquet"`
+- `load_csv(path, **kwargs)` → wrapper do `pd.read_csv`
+- `load_table_simple(path, fmt=None, *args, **kwargs)`  
+  Compatível com: `fmt` **ou** dicionário de `read_opts` posicional.
+- `save_table(df, path, fmt=None, **kwargs)` → respeita a extensão (`.csv`/`.parquet`), cria pastas e loga.
+- `list_directory_files(dir)` e `suggest_source_path(dir, pattern="*.csv")` → inventário rápido de fontes.
+- `save_named_interims({name: df}, base_dir, fmt="parquet")` → salva múltiplos *interims* nomeados.
 
 ---
 
-## 🩹 Faltantes & Outliers & Duplicatas
+## 🔎 Perfil, tipagem & qualidade
 
-### `missing_report(df) -> pd.DataFrame`
-Tabela com `missing_rate` e `missing_count` por coluna.
+- `basic_overview(df) -> dict` → shape, dtypes, memória (MB).
+- `strip_whitespace(df, cols=None)` → *trim* + colapso de espaços para textos.
+- `infer_numeric_like(df, cols=None, decimal=".", thousands=None, report_path="cast_report.csv") -> (df, report)`  
+  Converte “strings numéricas” para números e **persiste relatório** em `reports/` (via `save_report_df`).
+- `n1_quality_typing(df, config)` / `n1_quality_typing_dict(df, config)` → *pipeline* compacto com logs.
 
-### `simple_impute(df) -> pd.DataFrame`
-Imputação “simples”: numéricos → mediana; categóricos → moda.
-
-### `simple_impute_with_flags(df) -> pd.DataFrame`
-Igual ao anterior, mas adiciona **flags booleanas** `was_imputed_<col>` marcando linhas preenchidas (rastreabilidade).
-
-### `detect_outliers_iqr(df, cols=None) -> pd.DataFrame`
-Cria colunas `<col>_is_outlier` usando método **IQR** (robusto a assimetrias).
-
-### `detect_outliers_zscore(df, threshold=3.0, cols=None) -> pd.DataFrame`
-Cria colunas `<col>_is_outlier` a partir de **Z-score** (assume distribuição ~normal).
-
-### `deduplicate_rows(df, subset=None, keep="first", log_path=None, return_report=False)`
-Remove duplicatas e, opcionalmente, **loga** as linhas duplicadas em CSV.
-- `subset`: colunas que definem a chave; `None` = linha inteira.
-- `keep`: `"first" | "last" | False` (remove todas as repetições).
-- `return_report=True` retorna `(df_limpo, dups_df, resumo_df)`.
+### Faltantes, duplicatas e outliers
+- `missing_report(df)` → tabela com `missing_count`/`missing_pct`.
+- `simple_impute_with_flags(df, strategy="median") -> (df, meta)` → flags `was_missing` por coluna (rastreável).
+- `deduplicate_rows(df, subset=None, keep="first", config=None) -> df`  
+  **Nova** assinatura lê `config["deduplicate"]` (subset/keep) se passado.
+- `apply_outlier_flags(df, config=None, method=None, iqr_factor=None, z_threshold=None, ...) -> (df, info)`  
+  **Nova** API que cria colunas `<col>_is_outlier` por **IQR** ou **Z-score**, respeitando `config["outliers"]`  
+  (cols, exclude_cols, exclude_binaries, iqr_factor, z_threshold) e pode **persistir** resumo em `reports/outliers/summary.csv`.
 
 ---
 
 ## 🔤 Categóricas & 🔢 Numéricas
 
-> Use as versões **_safe_** abaixo para mais controle (exclusões e avisos).
-
-### `encode_categories(df, encoding="onehot") -> (df, meta)`
-Wrapper simples (usa scikit-learn). Converte todas as categóricas do DF passado.
-- `encoding="onehot" | "ordinal"`
-- `meta` inclui mapeamentos de categorias.
-
-### `scale_numeric(df, method="standard") -> (df, meta)`
-Padroniza/normaliza **todas** as colunas numéricas do DF passado.
-- `method="standard" | "minmax"`
-
-### `encode_categories_safe(df, method="onehot", exclude_cols=None, high_card_threshold=50) -> (df, meta)`
-Codificação com **exclusão de colunas** (ex.: `["Churn","customerID"]`) e **aviso de alta cardinalidade**.
-- `meta`: colunas categóricas tratadas, excluídas e aviso de cardinalidade.
-
-### `scale_numeric_safe(df, method="standard", exclude_cols=None, only_continuous=True) -> (df, meta)`
-Escala **apenas** as numéricas **contínuas** (ignora dummies/booleanas) e permite excluir colunas-alvo.
-
-### `apply_encoding_and_scaling(df, encode_cfg=None, scale_cfg=None) -> (df, encoding_meta, scaling_meta)`
-Orquestra **encode → scale** com configs:
-- `encode_cfg = {enabled, type, exclude_cols, high_card_threshold}`
-- `scale_cfg  = {enabled, method, exclude_cols, only_continuous}`
+- `encode_categories(df, cols=None, drop_first=False, high_cardinality_threshold=20, top_k=None, other_label="__OTHER__") -> (df, meta)`
+- `encode_categories_safe(df, exclude_cols=None, **kwargs)` → ignora alvo/IDs e protege contra alta cardinalidade.
+- `scale_numeric(df, method="standard"|"minmax", cols=None) -> (df, meta)`
+- `scale_numeric_safe(df, exclude_cols=None, only_continuous=True, **kwargs)` → evita dummies/booleanas.
+- `apply_encoding_and_scaling(df, config) -> (df, meta)` → orquestra encode→scale lendo sub-`config` (`encoding`/`scaling`).
 
 ---
 
 ## 📅 Datas
 
-### `detect_date_candidates(df, pattern) -> list[str]`
-Encontra colunas candidatas a data por **regex** ou dtype datetime já existente.
-
-### `_maybe_to_datetime(s, dayfirst, utc, formats) -> pd.Series` _(interno)_
-Tenta converter com formatos explícitos; se falhar, usa fallback genérico.
-
-### `parse_dates_with_report(df, cfg) -> (df, parse_report, parsed_cols)`
-Converte colunas de data e retorna relatório com:
-- `column`, `parsed_ratio`, `converted` (aceita se `parsed_ratio >= min_ratio`).
-- `cfg`: `detect_regex`, `explicit_cols`, `dayfirst`, `utc`, `formats`, `min_ratio`.
-
-### `expand_date_features(df, cols, features=None, prefix_mode="auto", fixed_prefix=None) -> list[str]`
-Gera features como `*_year`, `*_month`, `*_day`, `*_dow`, `*_quarter`, `*_week`, `*_is_month_start`, `*_is_month_end`.
-
-### `build_calendar_from(df, date_col, freq="D") -> pd.DataFrame`
-Cria uma **dimensão calendário** (`dim_date`) com atributos de data entre o min/max observados.
+- `detect_date_candidates(df, regex_list=None)`
+- `parse_dates_with_report(df, cols=None, dayfirst=False, utc=False, errors="coerce", min_ratio=0.6, report_path="date_parse_report.csv") -> (df, report)`
+- **Nova:** `parse_dates_with_report_cfg(df, cfg) -> (df, report, parsed_cols)`  
+  Lê um dicionário `cfg` com: `detect_regex`, `explicit_cols`, `dayfirst`, `utc`, `formats`, `min_ratio`, `report_path`.
+- `expand_date_features(df, cols)` → `*_year`, `*_month`, `*_day`, `*_dow`, `*_week`, `*_quarter`.
+- **Nova:** `expand_date_features_plus(df, date_cols, features=("year","month","day","dayofweek","quarter","week","is_month_start","is_month_end"), prefix_mode="auto") -> list[str]`
+- `build_calendar_from(df, col, freq="D") -> dim_date`
 
 ---
 
 ## 📝 Texto
 
-### `extract_text_features(df, lower=True, strip_collapse_ws=True, keywords=None, blacklist=None, export_summary=False, summary_dir=None) -> (df, summary_df)`
-Extrai métricas simples de colunas textuais (`object`):
-- Comprimento, contagem de palavras, contagem de **letras** e **dígitos**.
-- Flags de **palavras-chave** `*_has_<kw>` (case-insensitive).
-- `summary_df` lista colunas processadas e flags criadas; pode salvar CSV.
+- **Nova (ampliada):** `extract_text_features(df, *, lower=True, strip_collapse_ws=True, keywords=None, blacklist=None, export_summary=True, summary_dir=None) -> (df, summary_df)`  
+  - Limpeza leve (minúsculas/opcional e espaços).  
+  - Métricas: `<col>_len`, `<col>_word_count`.  
+  - Flags por *keywords*: `<col>_has_<kw>`.  
+  - Exporta `text_features_summary.csv` quando configurado.
 
 ---
 
-## 📚 Catálogo de DataFrames
+## 🎯 Target
 
-### `TableStore`
-Catálogo leve para gerenciar múltiplos DataFrames nomeados com um **“current”**.
-- **Principais métodos**
-  - `add(name, df, set_current=False)` — registra/atualiza.
-  - `get(name=None)` — obtém o df de `name` (ou o atual).
-  - `use(name)` — torna `name` atual e retorna o df.
-  - `list()` — inventário (nome, linhas, colunas, memória).
-  - `rename(old, new)` / `drop(name)`.
-- **Acesso estilo dicionário:** `T["features_v1"]`.
+- `build_target(df, config) -> (df, meta)` → regra simples com `col`/`op`/`value` (uso pontual).
+- `ensure_target_from_config(df, config, verbose=False) -> (df, target_name, class_map, report_df)`  
+  Lê `config["target"] = {name, source, positive, negative}`.  
+  - Se `name` já existir no DF → **respeita**.  
+  - Se `source` existir → cria `name` mapeando `positive`/`negative`.  
+  - Caso contrário → cria `name` nulo e reporta **não criado**.  
+  - `class_map` persistível via `globals()["class_map"] = class_map` (usado no N1 para alimentar `meta.json`).
 
 ---
 
-## 🧪 Exemplos rápidos
+## 📚 Catálogo: `TableStore`
 
-### 1) Ingestão + visão geral
-```python
-df = load_table_simple(RAW_DIR / "dataset.csv", read_opts={"encoding":"utf-8", "sep": ","})
-print(basic_overview(df))
-```
-
-### 2) Limpeza e tipagem
-```python
-df = strip_whitespace(df)
-df, rep = infer_numeric_like(df, min_ratio=0.9, blacklist=["customerID"])
-```
-
-### 3) Faltantes, outliers e duplicatas
-```python
-df = simple_impute_with_flags(df)
-df = detect_outliers_iqr(df)
-df = deduplicate_rows(df, subset=["customerID"], keep="first", log_path=REPORTS_DIR/"duplicates.csv")
-```
-
-### 4) Datas + calendário
-```python
-cfg = {"detect_regex": r"(date|data|_dt$|_date$)", "min_ratio": 0.8}
-df, parse_report, parsed = parse_dates_with_report(df, cfg)
-created = expand_date_features(df, parsed)
-dim_date = build_calendar_from(df, date_col="order_date", freq="D")
-```
-
-### 5) Texto
-```python
-df, text_sum = extract_text_features(df, keywords=["error", "cancel"], blacklist=["customerID"])
-```
-
-### 6) Encode & Scale (safe)
-```python
-ENCODE_CFG = {"enabled": True, "type": "onehot", "exclude_cols": ["Churn","customerID"], "high_card_threshold": 50}
-SCALE_CFG  = {"enabled": True, "method": "standard", "exclude_cols": ["Churn"], "only_continuous": True}
-df, enc_meta, scl_meta = apply_encoding_and_scaling(df, ENCODE_CFG, SCALE_CFG)
-```
-
-### 7) Catálogo de DataFrames
+Mini-catálogo para múltiplos DataFrames nomeados com *current*:
 ```python
 T = TableStore(initial={"main": df}, current="main")
-df = T.get()
-T.add("features_v1", df, set_current=True)
-display(T.list())
+T.add("features_v1", df2, set_current=True)
+df = T.get()         # pega o current
+df_raw = T["main"]   # dict-like
+display(T.list())    # inventário com memória
 ```
+
+---
+
+## 🧪 Exemplos (copiar-e-colar)
+
+### 1) Datas com cfg + features
+```python
+df, rep, parsed = ud.parse_dates_with_report_cfg(
+    df,
+    {"detect_regex": r"(date|data|_at$|_date$)", "min_ratio": 0.8, "dayfirst": False}
+)
+created = ud.expand_date_features_plus(df, parsed, features=("year","month","week","is_month_end"))
+```
+
+### 2) Outliers com persistência de resumo
+```python
+df, out_info = ud.apply_outlier_flags(df, config)
+# out_info["persisted"] → {'report_relpath': 'outliers/summary.csv', 'rows': ...} quando habilitado
+```
+
+### 3) Texto com keywords e blacklist
+```python
+df, txt_sum = ud.extract_text_features(
+    df, keywords=["error","cancel","premium"], blacklist=["customerID"],
+    export_summary=True, summary_dir=ud.get_artifacts_dir("text_features")
+)
+```
+
+### 4) Encode & Scale seguras
+```python
+ENC = {"exclude_cols": ["Churn","customerID"], "high_cardinality_threshold": 50}
+SCL = {"exclude_cols": ["Churn"], "method": "standard"}
+df_enc, meta = ud.apply_encoding_and_scaling(df, {"encoding": ENC, "scaling": SCL})
+```
+
+### 5) Exportações com caminho relativo à raiz
+```python
+root = ud.ensure_project_root()
+ud.save_report_df(df.head(10), "quick/preview.csv", root=root)  # → reports/quick/preview.csv
+art_dir = ud.get_artifacts_dir("export")                       # → reports/artifacts/export
+```
+
+---
+
+## 🔖 Convenções e Logs
+
+- Sufixos de auditoria: `_is_outlier`, `was_missing`, `<col>_num`, `<col>_has_<kw>`.
+- Logs via `logger` do módulo (`reports/data_preparation.log` quando configurado no notebook).
 
 ---
 
 ## ✅ Dependências
+
 - `pandas`, `numpy`
-- `scikit-learn` (para codificação/escala)
+- `scikit-learn` (para encode/scale e imputações avançadas)
 - Python ≥ 3.10 recomendado
+- (Opcional) `joblib` para artefatos; `weasyprint`/`pandoc` para `md_to_pdf`.
 
 ---
 
-## 🔖 Exportações (API do módulo)
-As principais funções/classes expostas via `__all__` incluem:
-- Ingestão/Exportação: `load_csv`, `save_parquet`, `save_table`, `load_table_simple`, `infer_format_from_suffix`, `save_named_interims`
-- Perfil/Otimização: `basic_overview`, `reduce_memory_usage`, `strip_whitespace`, `infer_numeric_like`, `missing_report`, `simple_impute`, `simple_impute_with_flags`
-- Qualidade: `detect_outliers_iqr`, `detect_outliers_zscore`, `deduplicate_rows`
-- Categ/Num: `encode_categories`, `scale_numeric`, `encode_categories_safe`, `scale_numeric_safe`, `apply_encoding_and_scaling`
-- Datas: `parse_dates_with_report`, `expand_date_features`, `build_calendar_from`, `detect_date_candidates`
-- Texto: `extract_text_features`
-- Catálogo: `TableStore`
-- Utilidade: `list_directory_files`
+## 🔁 Compatibilidade Retroativa
+
+Este módulo mantém **aliases e assinaturas compatíveis** com versões anteriores:
+- `resolve_n1_paths()` aceita chamadas antigas (com/sem `config`).
+- `TableStore` preserva métodos (`add/get/use/list`) e acesso `dict-like`.
+- `load_table_simple` aceita `fmt` **ou** o `read_opts` via *args*.
 
 ---
 
-## 🧭 Convenções
-- **Sufixos de auditoria:** `_is_outlier`, `was_imputed_<col>`, `<col>_num`, `*_has_<kw>`.
-- **Logs** são emitidos pelo `logger` do módulo (gravados em `reports/data_preparation.log` quando configurado no notebook).
-- Funções “_safe_” priorizam **previsibilidade** e **controle explícito** ao custo de mais parâmetros.
+## 📌 Dicas de uso no N1
+
+- Use `ud.get_artifacts_dir("<subdir>")` para **todas** as saídas auxiliares do N1 (ex.: `export`, `text_features`, `calendar`, `outliers`).  
+- Garanta a *seed* global cedo com `ud.set_random_seed(seed)` (ou defina `RANDOM_SEED` pelo `config`).  
+- Ao criar o **target**, propague `class_map` para o `meta.json` e para o N2.
+
+---
+
+## 🧾 Exportações (API)
+
+Principais nomes expostos via `__all__`:  
+`ensure_project_root`, `load_config`, `load_manifest`, `save_manifest`, `update_manifest`, `record_step`, `with_step`,  
+`save_artifact`, `load_artifact`, `save_report_df`, `save_text`,  
+`N1Paths`, `resolve_n1_paths`, `path_of`,  
+`list_directory_files`, `infer_format_from_suffix`, `load_csv`, `load_table_simple`, `save_table`, `suggest_source_path`,  
+`strip_whitespace`, `infer_numeric_like`, `n1_quality_typing`, `n1_quality_typing_dict`,  
+`simple_impute_with_flags`, `deduplicate_rows`, `detect_outliers_iqr`, `detect_outliers_zscore`, `apply_outlier_flags`,  
+`normalize_categories`, `encode_categories`, `encode_categories_safe`, `scale_numeric`, `scale_numeric_safe`, `apply_encoding_and_scaling`,  
+`detect_date_candidates`, `parse_dates_with_report`, `parse_dates_with_report_cfg`, `expand_date_features`, `expand_date_features_plus`, `build_calendar_from`,  
+`extract_text_features`,  
+`build_target`, `ensure_target_from_config`,  
+`TableStore`, `basic_overview`, `missing_report`, `merge_chain`,  
+`generate_human_report_md`, `md_to_pdf`,  
+`set_random_seed`, `set_display`,  
+`UTILS_DATA_VERSION`.

@@ -1,221 +1,280 @@
-# 🧩 Data Project Template
+# 🧰 `utils/` — Utility Toolkit for Data Projects (v1.2.2-merged)
 
-Modelo-base para projetos de **análise** e **engenharia de dados**, com foco em **clareza**, **organização** e **reprodutibilidade**.  
-Inclui pipeline de preparação, utilitários prontos em `utils/`, configuração declarativa via `config/` e exportação de artefatos.
+Coleção de utilitários usada pelos notebooks (N1→N3) para **ingestão**, **limpeza**, **engenharia de atributos**, **datas**, **texto**, **codificação/escala**, **catálogo de DataFrames**, **artefatos**, **manifest** e, no N2, **UI futurista com Grid/Random Search (Hyperdrive)**.  
+Módulo principal: **`utils/utils_data.py`** (versão `UTILS_DATA_VERSION = "1.2.2-merged"`).
 
----
-
-## 📁 Estrutura do Repositório
-
-```
-data-project-template/
-├── data/             # camadas de dados (bruto → intermediário → processado)
-│   ├── raw/          # dados originais
-│   ├── interim/      # intermediários após limpeza e tratamento
-│   └── processed/    # dataset final para modelagem
-├── artifacts/        # metadados, tabelas derivadas (ex.: dim_date) e modelos exportados
-├── config/           # defaults.json (obrigatório) e local.json (opcional, overrides)
-├── dashboards/       # arquivos de dashboards (Power BI, etc.)
-├── notebooks/        # Jupyter Notebooks do fluxo (N1, N2, N3…)
-├── prints/           # screenshots/figuras para documentação
-├── reports/          # logs, relatórios CSV/HTML, PDF e manifest.json
-├── utils/            # funções reutilizáveis (utils_data.py, etc.)
-├── .gitignore
-└── README.md
-```
+> Import típico no notebook:
+> ```python
+> import importlib, utils.utils_data as ud
+> importlib.reload(ud)        # útil durante edição do módulo
+> from utils.utils_data import TableStore
+> ```
 
 ---
 
-## 🚀 Fluxo de Trabalho no notebook 01_data_preparation_template
+## 🧭 Descoberta de raiz, config e manifest
 
-1. **Configuração do Projeto**  
-   - Descoberta da raiz, carregamento de `config/defaults.json` (e `local.json` se existir).  
-   - Definição de caminhos `data/`, `reports/`, `artifacts/` e logging em `reports/data_preparation.log`.
+- `ensure_project_root() -> Path`  
+  Sobe a árvore até `config/defaults.json`, devolve a **raiz do projeto** e injeta `utils/` em `sys.path`.
 
-2. **Configuração de Fontes**  
-   - Defina `SOURCES` (caminho, formato e opções) e `MAIN_SOURCE`.  
-   - Opcional: `MERGE_STEPS` para encadear *joins* (com checagem básica de chaves).
+- `load_config(base_abs=None, local_abs=None) -> dict`  
+  Lê `config/defaults.json` e faz *deep merge* com `config/local.json` se existir.
 
-3. **Ingestão & Visão Rápida**  
-   - Leitura de cada fonte (`load_table_simple`) + `basic_overview` e `missing_report`.  
-   - Execução de *merge chain* quando configurado.
-
-4. **Catálogo de DataFrames**  
-   - `TableStore` centraliza múltiplos `DataFrames` nomeados.  
-   - Convenção: manter um `df` “ativo” via `T.get()` ou `T.use("nome")`.
-
-5. **Qualidade & Tipagem**  
-   - `strip_whitespace` → limpeza leve de texto.  
-   - `infer_numeric_like` → converte strings numéricas respeitando *ratio* mínimo, com *report*.  
-   - `reduce_memory_usage` → *downcast* numérico e relatório de memória.  
-   - Exportação **interim** (quando habilitado).
-
-6. **Padronização Categórica (pré-engenharia)**  
-   - Normalizações explícitas e simples (ex.: `"No internet service" → "No"`).  
-   - Mantida próxima da etapa anterior por depender da detecção de tipos/valores.
-
-7. **Tratamento de Faltantes**  
-   - `simple_impute_with_flags` (mediana/moda) + colunas `was_imputed_<col>`.  
-   - Transparência e rastreabilidade dos preenchimentos.
-
-8. **Detecção de Outliers (opcional)**  
-   - **IQR** ou **Z-score** gerando apenas *flags* `*_is_outlier` (decisão de negócio fica fora).
-
-9. **Duplicidades**  
-   - `deduplicate_rows` com suporte a `subset`, política `keep` e *log* CSV opcional de duplicatas.  
-   - Pode retornar relatório de chaves duplicadas.
-
-10. **Tratamento de Datas**  
-    - `parse_dates_with_report` detecta/força colunas de data e audita *parsed_ratio*.  
-    - `expand_date_features` cria `*_year`, `*_month`, `*_week`, `*_is_month_*` etc.  
-    - Criação de **dim_date** com `build_calendar_from` (opcional).
-
-11. **Tratamento de Texto (opcional)**  
-    - `extract_text_features`: tamanho, contagem de palavras/letras/dígitos e *keywords*.  
-    - Opção de exportar *summary* em `reports/text_features/`.
-
-12. **Codificação & Escalonamento (opcionais)**  
-    - `apply_encoding_and_scaling`: *wrapper* que orquestra  
-      `encode_categories_safe` (one-hot/ordinal com exclusões e alerta de cardinalidade)  
-      e `scale_numeric_safe` (standard/minmax apenas em contínuas, se desejado).
-
-13. **Exportação de Artefatos e Metadados**
-    - Salva **datasets intermediários e finais** (`data/interim/`, `data/processed/`).
-    - Gera **meta.json** enriquecido com:
-      - target alinhado ao `config.target.name`
-      - mapeamento de classes (`class_map`)
-      - tipos de dados (`dtypes`)
-      - contagem de linhas (`rows`)
-    - Cria `manifest.json` em `reports/artifacts/export/` com:
-      - seed, memória, shape, flags de imputação/outliers e caminhos exportados.
-
-14. **Resumo Final de Sanidade**
-    - Valida presença dos artefatos exportados (interim, processed, meta, manifest).
-    - Mostra o shape final e confirma o target ativo.
-    - Exemplo de saída:
-      ```
-      ✅ N1 concluído
-      Shape: (7043, 28)
-      Target: Churn
-      Meta: artifacts/metadata/dataset_meta.json
-      Manifest: reports/artifacts/export/manifest.json
-      ```
+- Manifest helpers: `load_manifest()`, `save_manifest()`, `update_manifest()`, `record_step(name, details=None)`, e o *context manager* `with_step(name, details=None)` para auditar etapas com timestamps.
 
 ---
 
-## ⚙️ Configuração via `config/`
+## 📦 Artefatos, relatórios e paths
 
-- **`defaults.json`**: parâmetros padrão (obrigatório).  
-- **`local.json`**: overrides por projeto/ambiente (opcional).  
-- As *flags* mais usadas:  
-  - `infer_types`, `cast_numeric_like`, `strip_whitespace`  
-  - `handle_missing` + `missing_strategy`  
-  - `detect_outliers` + `outlier_method`  
-  - `deduplicate` (+ subset/keep/log)  
-  - `normalize_categories`  
-  - `date_features`, `text_features`, `feature_engineering`  
-  - `encode_categoricals` + `encoding_type`  
-  - `scale_numeric` + `scaler`  
-  - `export_interim`, `export_processed`  
-  - `random_seed`: controla reprodutibilidade entre notebooks N1–N3
+- `save_artifact(obj, name)` / `load_artifact(name)`  
+  Salva/carrega `.joblib` em `artifacts/`. Registra passo no manifest.
 
-> As configurações ativas são registradas no log e no `manifest.json`.
+- `save_report_df(df, rel_path)` e `save_text(text, rel_path)`  
+  Persistem em `reports/<rel_path>`, criando pastas conforme necessário.
+
+- `get_artifacts_dir(subdir: str | None = None) -> Path`  
+  Garante e retorna `reports/artifacts[/<subdir>]`. **Observação:** a função aparece duas vezes no arquivo (mesma assinatura/propósito) — comportamento idêntico.
+
+- Paths N1 (dataclass): `N1Paths` + helpers `resolve_n1_paths(...)` (compatível com chamadas antigas) e `path_of(*parts)`.
 
 ---
 
-## 🧰 Principais Utilitários (`utils/utils_data.py`)
+## 📥 Ingestão & 📤 Exportação
 
-- **Ingestão**: `infer_format_from_suffix`, `load_table_simple`, `merge_chain`  
-- **Qualidade/Tipos**: `strip_whitespace`, `infer_numeric_like`, `reduce_memory_usage`, `missing_report`, `simple_impute_with_flags`  
-- **Outliers & Duplicidades**: `detect_outliers_iqr`, `detect_outliers_zscore`, `deduplicate_rows`  
-- **Datas**: `parse_dates_with_report`, `expand_date_features`, `build_calendar_from`  
-- **Texto**: `extract_text_features`  
-- **Encode & Scale**: `encode_categories_safe`, `scale_numeric_safe`, `apply_encoding_and_scaling`  
-- **Catálogo**: `TableStore`, `save_named_interims`  
-- **Arquivos**: `save_table`, `save_parquet`, `list_directory_files`
+- `list_directory_files(path) -> DataFrame`  
+  Inventário recursivo de arquivos (tamanho, sufixo, mtime).
 
-Um README detalhado dos utilitários está em `utils/UTILS_README.md`.
+- `suggest_source_path(directory, pattern="*.csv", max_rows=50) -> DataFrame`  
+  “Vitrine” rápida de possíveis fontes.
 
----
+- `infer_format_from_suffix(path) -> "csv"|"parquet"`  
+  Infere formato pelo sufixo.
 
-## 🧪 Rodando o Template (resumo)
+- `load_csv(...)` e `load_table_simple(path, fmt=None, *args, **kwargs) -> DataFrame`  
+  Compatível com chamadas antigas (dicionário posicional de opções) e autoformato.
 
-1. Coloque seus arquivos em `data/raw/`.  
-2. (Opcional) Execute no notebook a listagem de arquivos: `list_directory_files(RAW_DIR)` para escolher *sources*.  
-3. Configure `SOURCES`, `MAIN_SOURCE` e (se necessário) `MERGE_STEPS`.  
-4. Siga as células do pipeline (N1 — Preparação de Dados).  
-5. Exporte *interim*/*processed* + `manifest.json`.
+- `save_table(df, path, fmt=None, **kwargs) -> Path`  
+  Respeita extensão e loga linhas salvas.
 
 ---
 
-## 🔒 Boas Práticas
+## 🔎 Visões rápidas, merge e qualidade
 
-- **Não comite dados sensíveis**. Prefira *placeholders* e `.gitignore`.  
-- Documente normalizações e decisões de negócio no README do projeto.  
-- Use `local.json` para ajustes de ambiente sem tocar o template.  
-- Registre mudanças relevantes nos logs e no `manifest.json`.
+- `basic_overview(df) -> dict`  
+  Linhas, colunas, dtypes, memória MB.
 
----
+- `missing_report(df) -> DataFrame`  
+  `%` e contagem de nulos por coluna.
 
-## 📝 Licença & Créditos
+- `merge_chain(base, tables: dict, steps: list) -> DataFrame`  
+  Orquestra merges encadeados declarativos (com `on`/`left_on`/`right_on`, `validate`, `drop_cols`).
 
-- Licença: MIT (ajuste conforme sua necessidade).  
-- Template montado para estudos/portfólio e rápido *bootstrap* de projetos de dados.
+- `strip_whitespace(df, cols=None)`  
+  Trim/colapso de espaços para texto.
 
-## 🚀 Getting Started
+- `infer_numeric_like(df, cols=None, decimal=".", thousands=None, report_path="cast_report.csv") -> (df, report)`  
+  Converte strings numéricas com relatório em `reports/`.
 
-### 1) Ambiente
-```bash
-python -m venv .venv
-# Linux/macOS
-source .venv/bin/activate
-# Windows (Powershell)
-# .venv\Scripts\Activate.ps1
-
-pip install -r requirements.txt  # ou instale as libs do seu stack padrão
-```
-
-### 2) Estrutura mínima
-Coloque seus arquivos de entrada em `data/raw/`. Exemplo:
-```
-data/raw/
-├── input.csv
-└── customers_2025-10-01.csv
-```
-
-### 3) Configurações
-- O arquivo `config/defaults.json` contém as flags padrão do pipeline.
-- Para ajustes locais (sem mexer nos defaults), crie `config/local.json`. Exemplo:
-```json
-{
-  "text_features": true,
-  "export_processed": true,
-  "scale_numeric": true,
-  "scaler": "minmax",
-  "normalize_categories": true
-}
-```
-> O projeto faz *merge* de `defaults.json` com `local.json` (local sobrepõe).
-
-### 4) Execução do N1 (Preparação de Dados)
-Abra e rode o notebook:
-```
-notebooks/01_data_preparation_template.ipynb
-```
-Saídas esperadas:
-- Intermediários em `data/interim/` (se habilitado)
-- Processados em `data/processed/`
-- Metadados em `artifacts/metadata/dataset_meta.json`
-- Manifesto em `reports/artifacts/export/manifest.json`
-
-### 5) Dicas
-- Mantenha apenas uma **fonte canônica** de dados brutos em `data/raw/`.
-- Use nomes descritivos e com datas (`snake_case` + `YYYY-MM-DD`).
+- `n1_quality_typing_dict(df, config)` e `n1_quality_typing(df, config)`  
+  Pipeline compacto (strip → inferência numérica) com logs e relatório de cast.
 
 ---
 
-### 🧭 Filosofia de normalização categórica
-Por padrão, mantemos os rótulos exatamente como estão nos dados brutos. A normalização só ocorre quando
-`normalize_categories = true`, garantindo **controle explícito** e evitando perda de semântica (ex.: diferenças sutis
-de grafia que carregam significado). Essa regra torna a transformação **previsível** e **auditável** — você decide quando
-e como normalizar.
+## 🧩 Faltantes, duplicidade e outliers
+
+- `simple_impute_with_flags(df, strategy="median") -> (df, meta)`  
+  Imputa numéricas (média/mediana) e categoriza faltantes com `<col>_was_missing`.
+
+- `handle_missing_step(df, config, save_reports=True, prefer="auto") -> dict`  
+  Orquestra “faltantes” ponta-a-ponta (relatórios before/after + estratégias `simple`/`knn`/`iterative` com fallback).
+
+- `deduplicate_rows(df, subset=None, keep="first") -> (df, log)`  
+  Remove duplicadas e devolve log com removidas. **Obs.:** ao final do arquivo existe uma **segunda** definição compatível que aceita `config` e retorna apenas `df` (preferir a primeira assinatura; a segunda preserva compat retroativa).
+
+- `detect_outliers_iqr(df, cols=None, k=1.5) -> DataFrame[bool]`  
+- `detect_outliers_zscore(df, cols=None, z=3.0) -> DataFrame[bool]`  
+  Máscaras booleanas por coluna.
+
+- `apply_outlier_flags(df, config=None, *, method=None, iqr_factor=None, z_threshold=None, cols=None, exclude_cols=None, exclude_binaries=None, flag_suffix="_is_outlier", persist=None, persist_relpath=None) -> (df, info)`  
+  Cria `<col>_is_outlier` por IQR/Z-score, com exclusões, persistência opcional de **resumo** em `reports/outliers/summary.csv`.
+
+---
+
+## 🔤 Categóricas & 🔢 Numéricas
+
+- `normalize_categories(df, cols=None, case="lower", trim=True, strip_accents=True, cfg=None, report_path=None) -> (df, report)`  
+  Normalização (case/acentos/espacos) com mapeamentos globais/por coluna e relatório opcional.
+
+- `encode_categories(df, cols=None, drop_first=False, high_cardinality_threshold=20, top_k=None, other_label="__OTHER__") -> (df, meta)`  
+  One-hot (com *top-k* p/ alta cardinalidade).  
+  `encode_categories_safe(df, exclude_cols=None, **kwargs)`.
+
+- `scale_numeric(df, method="standard"|"minmax", cols=None) -> (df, meta)`  
+  `scale_numeric_safe(df, exclude_cols=None, **kwargs)`.
+
+- `apply_encoding_and_scaling(df, config) -> (df, meta)`  
+  Orquestra encode→scale lendo `config["encoding"]` e `config["scaling"]`.
+
+---
+
+## 📅 Datas
+
+- `detect_date_candidates(df, regex_list=None) -> list[str]`  
+  Heurística por nome.
+
+- `parse_dates_with_report(df, cols=None, dayfirst=False, utc=False, errors="coerce", min_ratio=0.6, report_path="date_parse_report.csv") -> (df, report)`  
+  Parsing com relatório de sucesso/erros.
+
+- **Nova:** `parse_dates_with_report_cfg(df, cfg) -> (df, report, parsed_cols)`  
+  Variante via dicionário (regex/explicit, formatos, `min_ratio`) e lista de colunas convertidas.
+
+- `expand_date_features(df, cols) -> df`  
+  `*_year`, `*_month`, `*_day`, `*_dow`, `*_week`, `*_quarter`.
+
+- **Nova:** `expand_date_features_plus(df, date_cols, *, features=(...), prefix_mode="auto") -> list[str]`  
+  Suporta `dayofweek`, `is_month_start`, `is_month_end`, etc., e retorna nomes criados.
+
+- `build_calendar_from(df, col, freq="D") -> DataFrame`  
+  Gera dimensão-calendário entre min/max da coluna.
+
+---
+
+## 📝 Texto
+
+- **Nova (ampliada):** `extract_text_features(df, *, lower=True, strip_collapse_ws=True, keywords=None, blacklist=None, export_summary=True, summary_dir=None) -> (df, summary_df)`  
+  Limpeza leve + métricas (`_len`, `_word_count`) e flags por *keywords*; resumo opcional em CSV.  
+  (Há também uma versão mais simples com assinatura antiga.)
+
+---
+
+## 🎯 Target
+
+- `build_target(df, config) -> (df, meta)`  
+  Regra simples `col/op/value` para derivar alvo.
+
+- `ensure_target_from_config(df, config, verbose=False) -> (df, target_name, class_map, report_df)`  
+  Garante/deriva a coluna `target` a partir de `config["target"]` (mapeando `positive`/`negative` quando aplicável).
+
+---
+
+## 📚 Catálogo: `TableStore`
+
+Mini-catálogo para múltiplos DataFrames nomeados com *current*:
+
+```python
+T = TableStore(initial={"main": df}, current="main")
+T.add("features_v1", df2, set_current=True)
+df = T.get()         # pega o current
+df_raw = T["main"]   # dict-like
+display(T.list())    # inventário com memória
+```
+
+---
+
+## 🧪 Métricas rápidas, plots e persistência de modelos (N2)
+
+- `compute_metrics(y_true, y_pred) -> dict`  
+  Acurácia e F1 com média adequada (binária vs. macro).
+
+- `try_plot_roc(clf, X_test, y_test) -> bool`  
+  Tenta plotar ROC (binário + `predict_proba`).
+
+- `persist_artifacts(name, pipeline, metrics, params, models_dir: Path, reports_dir: Path)`  
+  Salva `.joblib` + `*_metrics.json` + `*_params.json` e anexa entrada em `reports/manifest.jsonl`.
+
+---
+
+## 🧭 Helpers específicos para N2 / organização de pastas
+
+- `get_project_root() -> Path`  
+  Atalho p/ raiz (usa `ensure_project_root`).
+
+- `ensure_artifact_dirs(cfg) -> (artifacts_dir, reports_dir, models_dir)`  
+  Garante diretórios padrão e faz log.
+
+- `resolve_processed_path(cfg) -> Path`  
+  Encontra o arquivo final do N1 em `data/processed` com heurísticas e mensagens de diagnóstico.  
+  (**Aliases compat:** `ensure_dirs(cfg)` e `discover_processed_path(cfg)` disponíveis no bloco de retrocompatibilidade.)
+
+- `summarize_columns(df) -> (numeric_cols, categorical_cols, other_cols)`  
+  Particiona colunas por tipo para o N2.
+
+---
+
+## 🚀 N2 — UI Futurista + Hyperdrive (Grid/Random Search)
+
+Recursos que permitem montar, **no notebook**, um painel “painel interdimensional” com seleção de modelos, abas de hiperparâmetros com travas, treino direto e busca de hiperparâmetros (GridSearchCV / RandomizedSearchCV):
+
+- `n2_inject_css_theme()`  
+  Injeta o tema visual (CSS) usado pelo painel futurista.
+
+- `n2_model_registry() -> dict`  
+  Registro de modelos (Dummy, LogisticRegression, KNN, RandomForest) e widgets dos hiperparâmetros.
+
+- `n2_build_models_ui(preprocess, X_train, y_train, X_test, y_test, models_dir, reports_dir)`  
+  Monta toda a UI:  
+  1) **Seleção de modelos** (checkbox) com **trava de abas**;  
+  2) **Abas de hiperparâmetros** com widgets;  
+  3) **Treino direto** (usa os hiperparâmetros atuais dos widgets);  
+  4) **Hyperdrive** — gera automaticamente um `param_grid` a partir dos widgets e executa Grid/Random Search;  
+  5) **Persistência opcional** do melhor pipeline/relatórios via `persist_artifacts`.
+
+> **Uso típico no N2** (após definir `preprocess`, `X_train`, `y_train`, `X_test`, `y_test` e pastas):
+> ```python
+> artifacts_dir, reports_dir, models_dir = ud.ensure_artifact_dirs(cfg)
+> ud.n2_inject_css_theme()
+> ud.n2_build_models_ui(preprocess, X_train, y_train, X_test, y_test, models_dir, reports_dir)
+> ```
+
+---
+
+## 🔖 Convenções e Logs
+
+- Sufixos de auditoria: `_is_outlier`, `was_missing`, `<col>_len`, `<col>_word_count`, `<col>_has_<kw>`.
+- Logs via `logger` do módulo (varia conforme funções chamadas).
+
+---
+
+## ✅ Dependências
+
+- Python ≥ 3.10  
+- `pandas`, `numpy`, `scikit-learn` (encode/scale/imputers)  
+- (Opcional) `joblib` para artefatos; `weasyprint` ou `pandoc` para `md_to_pdf`.
+
+---
+
+## 🔁 Compatibilidade Retroativa
+
+- Assinaturas preservadas para `resolve_n1_paths`, `load_table_simple`, `n1_quality_typing`, `TableStore`, etc.  
+- Aliases auxiliares (`ensure_dirs`, `discover_processed_path`) mantidos para ambientes antigos.
+
+---
+
+## 📌 API pública (principais símbolos)
+
+`ensure_project_root`, `load_config`, `load_manifest`, `save_manifest`, `update_manifest`, `record_step`, `with_step`,  
+`save_artifact`, `load_artifact`, `save_report_df`, `save_text`,  
+`N1Paths`, `resolve_n1_paths`, `path_of`,  
+`list_directory_files`, `infer_format_from_suffix`, `load_csv`, `load_table_simple`, `save_table`, `suggest_source_path`,  
+`strip_whitespace`, `infer_numeric_like`, `n1_quality_typing`, `n1_quality_typing_dict`,  
+`simple_impute_with_flags`, `deduplicate_rows`, `detect_outliers_iqr`, `detect_outliers_zscore`, `apply_outlier_flags`,  
+`normalize_categories`, `encode_categories`, `encode_categories_safe`, `scale_numeric`, `scale_numeric_safe`, `apply_encoding_and_scaling`,  
+`detect_date_candidates`, `parse_dates_with_report`, `parse_dates_with_report_cfg`, `expand_date_features`, `expand_date_features_plus`, `build_calendar_from`,  
+`extract_text_features`,  
+`build_target`, `ensure_target_from_config`,  
+`TableStore`, `basic_overview`, `missing_report`, `merge_chain`,  
+`generate_human_report_md`, `md_to_pdf`,  
+`set_random_seed`, `set_display`,  
+`get_project_root`, `ensure_artifact_dirs`, `resolve_processed_path`, `summarize_columns`,  
+`compute_metrics`, `try_plot_roc`, `persist_artifacts`,  
+`n2_inject_css_theme`, `n2_model_registry`, `n2_build_models_ui`,  
+`UTILS_DATA_VERSION`.
+
+---
+
+### O que foi acrescentado vs. teu README anterior
+
+- Seção **N2 — UI Futurista + Hyperdrive** com `n2_inject_css_theme`, `n2_model_registry`, `n2_build_models_ui`.  
+- Helpers **N2**: `get_project_root`, `ensure_artifact_dirs`, `resolve_processed_path` (+ aliases `ensure_dirs`, `discover_processed_path`), `summarize_columns`.  
+- Utilitários de **métricas/plots/persistência**: `compute_metrics`, `try_plot_roc`, `persist_artifacts`.  
+- Observação sobre **duplicidade** de `get_artifacts_dir` e **duas** assinaturas de `deduplicate_rows` (mantidas por compatibilidade).

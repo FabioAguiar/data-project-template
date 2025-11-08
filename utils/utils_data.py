@@ -1902,3 +1902,429 @@ except NameError:
         manifest_rec = {"ts": ts, "model": name, "file": f"{base}.joblib", "metrics": metrics, "params": params}
         (reports_dir / "manifest.jsonl").open("a", encoding="utf-8").write(_json.dumps(manifest_rec, ensure_ascii=False) + "\n")
         print(f"[OK] Artefatos salvos em: {models_dir} e manifesto atualizado em reports/manifest.jsonl")
+
+
+# -----------------------------------------------------------------------------
+# UI Futurista + Hyperdrive (Grid/Random) para N2
+# -----------------------------------------------------------------------------
+
+import json, time
+from typing import Dict, Any, Tuple
+import ipywidgets as W
+from IPython.display import display, HTML, clear_output
+
+import numpy as np
+import pandas as pd
+from sklearn.pipeline import Pipeline as SKPipeline
+from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
+from sklearn.metrics import accuracy_score, f1_score
+
+# Reusa utilidades já existentes (persist_artifacts, etc.)
+# Certifique-se que persist_artifacts já está definido acima neste módulo.
+
+def n2_inject_css_theme() -> None:
+    """Injeta o tema 'painel interdimensional' no notebook."""
+    display(HTML(r"""
+    <style>
+      :root{
+        --lumen-bg: radial-gradient(1200px 600px at 20% -10%, rgba(0,255,209,0.20) 0%, transparent 50%),
+                    radial-gradient(900px 600px at 110% 110%, rgba(98,0,255,0.18) 0%, transparent 40%),
+                    linear-gradient(135deg, #0a0f16 0%, #0b0e14 100%);
+        --lumen-panel: rgba(15, 22, 33, 0.55);
+        --lumen-glass: rgba(11, 18, 29, 0.5);
+        --lumen-border: rgba(0, 255, 209, 0.35);
+        --lumen-glow: 0 0 0.5rem rgba(0,255,209,0.35), inset 0 0 0.5rem rgba(0,255,209,0.1);
+        --lumen-warn: #ffb86b;
+        --lumen-accent: #00ffd1;
+        --lumen-accent-2: #9a7dff;
+        --lumen-muted: #9aa4ad;
+        --lumen-text: #e8f4ff;
+      }
+      .lumen-console {
+        background: var(--lumen-bg);
+        border-radius: 14px;
+        padding: 14px 16px;
+        border: 1px solid var(--lumen-border);
+        box-shadow: var(--lumen-glow);
+        backdrop-filter: blur(10px) saturate(110%);
+        color: var(--lumen-text);
+        font-family: ui-sans-serif, system-ui, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial;
+      }
+      .lumen-header { display:flex; align-items:center; gap:12px; margin-bottom:10px; }
+      .lumen-title { font-weight:700; letter-spacing:.3px; font-size:16px; color:var(--lumen-accent);
+        text-shadow: 0 0 10px rgba(0,255,209,0.4); }
+      .lumen-chip { padding:2px 8px; border:1px solid var(--lumen-border); border-radius:999px;
+        font-size:11px; color:var(--lumen-accent-2); background: rgba(154,125,255,0.07);}
+      .lumen-row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+      .lumen-controls { display:flex; align-items:center; gap:8px; justify-content:space-between; margin-top:8px;}
+      .lumen-warning { color: var(--lumen-warn); font-size: 12px; margin-left: 6px; opacity: .9;}
+      .lumen-note { color: var(--lumen-muted); font-size: 12px; margin-left: 4px; }
+      .widget-tab { border:1px solid var(--lumen-border)!important; border-radius:10px; overflow:hidden;
+        box-shadow: inset 0 0 10px rgba(0,255,209,0.08); background: var(--lumen-glass)!important; }
+      .widget-tab>div:nth-child(1) {
+        background: linear-gradient(90deg, rgba(0,255,209,0.06), rgba(154,125,255,0.05)) !important;
+        border-bottom: 1px solid rgba(0,255,209,0.25) !important; }
+      .widget-tab .p-TabBar-tab { color:var(--lumen-text)!important; text-shadow:0 0 8px rgba(0,255,209,0.25);
+        border-right: 1px solid rgba(0,255,209,0.10); background:transparent!important; }
+      .widget-tab .p-TabBar-tab.p-mod-current {
+        background: linear-gradient(180deg, rgba(0,255,209,0.1), rgba(0,0,0,0)) !important;
+        box-shadow: inset 0 -3px 0 var(--lumen-accent); }
+      .lumen-card { margin:8px; padding:8px 10px; border:1px dashed rgba(0,255,209,0.25);
+        border-radius:10px; background: rgba(0, 12, 20, 0.35); }
+      .lumen-label { min-width:160px; color:var(--lumen-muted); font-size:12px; }
+      .lumen-play .widget-button { background: linear-gradient(135deg, rgba(0,255,209,0.25), rgba(154,125,255,0.25));
+        color: var(--lumen-text); border:1px solid var(--lumen-border); box-shadow: var(--lumen-glow); }
+    </style>
+    """))
+
+def n2_model_registry() -> Dict[str, Dict[str, Any]]:
+    """Define os modelos disponíveis e seus widgets de hiperparâmetros."""
+    return {
+        "DummyClassifier": {
+            "class": __import__("sklearn.dummy", fromlist=["DummyClassifier"]).DummyClassifier,
+            "params": {
+                "strategy": W.Dropdown(options=["most_frequent", "prior", "stratified", "uniform"], value="most_frequent")
+            },
+        },
+        "LogisticRegression": {
+            "class": __import__("sklearn.linear_model", fromlist=["LogisticRegression"]).LogisticRegression,
+            "params": {
+                "C": W.FloatLogSlider(base=10, min=-3, max=3, step=0.1, value=1.0),
+                "max_iter": W.IntSlider(min=100, max=5000, step=100, value=1000),
+                "solver": W.Dropdown(options=["lbfgs", "liblinear", "saga"], value="lbfgs"),
+            },
+        },
+        "KNeighborsClassifier": {
+            "class": __import__("sklearn.neighbors", fromlist=["KNeighborsClassifier"]).KNeighborsClassifier,
+            "params": {
+                "n_neighbors": W.IntSlider(min=1, max=50, step=1, value=5),
+                "weights": W.Dropdown(options=["uniform", "distance"], value="uniform"),
+                "p": W.IntSlider(min=1, max=2, step=1, value=2),
+            },
+        },
+        "RandomForestClassifier": {
+            "class": __import__("sklearn.ensemble", fromlist=["RandomForestClassifier"]).RandomForestClassifier,
+            "params": {
+                "n_estimators": W.IntSlider(min=50, max=1000, step=50, value=200),
+                "max_depth": W.Dropdown(options=[None, 5, 10, 20, 50], value=None),
+                "min_samples_split": W.IntSlider(min=2, max=20, step=1, value=2),
+                "min_samples_leaf": W.IntSlider(min=1, max=20, step=1, value=1),
+            },
+        },
+    }
+
+# --------- helpers internos ----------
+def _params_vbox(spec_params: Dict[str, Any]) -> W.VBox:
+    rows = []
+    for k, widget in spec_params.items():
+        if hasattr(widget, "layout"):
+            widget.layout.width = "340px"
+        rows.append(W.HBox([W.HTML(f"<span class='lumen-label'>{k}</span>"), widget]))
+    card = W.VBox(rows, layout=W.Layout(padding="6px"))
+    return W.VBox([card], layout=W.Layout())
+
+def _set_disabled(box: W.VBox, disabled: bool=True):
+    for child in box.children:
+        for row in child.children:
+            if isinstance(row, W.HBox) and len(row.children) == 2:
+                try:
+                    row.children[1].disabled = disabled
+                except Exception:
+                    pass
+
+def _apply_tab_title_style(tab: W.Tab, idx: int, title: str, enabled: bool):
+    mark = "✦ " if enabled else "⛔ "
+    tab.set_title(idx, f"{mark}{title}")
+
+def _widget_to_candidates(w):
+    # Transforma um widget em uma lista de candidatos discretos para Grid/Random
+    if isinstance(w, W.IntSlider):
+        lo, hi = int(w.min), int(w.max)
+        if hi <= lo:
+            return [int(w.value)]
+        mid = int(w.value)
+        vals = sorted({lo, mid, hi})
+        if len(vals) < 3 and hi - lo > 5:
+            vals = sorted({lo, (lo+hi)//2, hi})
+        return list(vals)
+    if isinstance(w, (W.FloatSlider, W.FloatLogSlider)):
+        try:
+            base = w.base if hasattr(w, "base") else 10
+            lo_exp, hi_exp = float(w.min), float(w.max)
+            exps = np.linspace(lo_exp, hi_exp, num=5)
+            vals = [float(base**e) for e in exps]
+            vals = sorted(set([round(v, 10) for v in vals] + [float(w.value)]))
+            return vals
+        except Exception:
+            lo, hi = float(getattr(w, "min", 0.1)), float(getattr(w, "max", 10.0))
+            vals = np.linspace(lo, hi, num=5).tolist()
+            if float(w.value) not in vals:
+                vals.append(float(w.value))
+            return sorted(set([round(v, 10) for v in vals]))
+    if isinstance(w, W.Dropdown):
+        return [opt for opt in w.options]
+    return [getattr(w, "value", None)]
+
+def _build_search_space(model_registry: Dict[str, Dict[str, Any]], model_name: str) -> dict:
+    spec = model_registry[model_name]
+    grid = {}
+    for pname, widget in spec["params"].items():
+        cand = _widget_to_candidates(widget)
+        grid[f"clf__{pname}"] = cand
+    return grid
+
+# --------- componentes públicos ----------
+def n2_build_models_ui(preprocess, X_train, y_train, X_test, y_test, models_dir, reports_dir):
+    """
+    Monta toda a UI de:
+      - seleção de modelos,
+      - abas de hiperparâmetros (com travas),
+      - treino direto
+      - Hyperdrive (GridSearchCV/RandomizedSearchCV)
+    """
+    n2_inject_css_theme()
+    MODEL_REGISTRY = n2_model_registry()
+
+    # Abas de params
+    model_checks = {
+        name: W.Checkbox(value=(name in ["LogisticRegression", "RandomForestClassifier"]),
+                         description=name, indent=False)
+        for name in MODEL_REGISTRY
+    }
+
+    model_param_boxes = {}
+    tab_children, tab_titles = [], []
+    name_to_index, index_to_name = {}, {}
+
+    for i, (name, spec) in enumerate(MODEL_REGISTRY.items()):
+        box = _params_vbox(spec["params"])
+        model_param_boxes[name] = box
+        tab_children.append(W.VBox([W.HTML(f"<div class='lumen-chip'>Hyperparams</div>"), box],
+                                   layout=W.Layout(padding="6px")))
+        tab_titles.append(name)
+        name_to_index[name] = i
+        index_to_name[i] = name
+
+    tab = W.Tab(children=tab_children)
+    for i, t in enumerate(tab_titles):
+        _apply_tab_title_style(tab, i, t, model_checks[t].value)
+
+    enabled_models = {n for n, cb in model_checks.items() if cb.value}
+    for name, box in model_param_boxes.items():
+        _set_disabled(box, disabled=(name not in enabled_models))
+
+    last_valid_index = next((name_to_index[n] for n in MODEL_REGISTRY if n in enabled_models), 0)
+    tab.selected_index = last_valid_index
+
+    def on_model_toggle(change, model_name: str):
+        nonlocal last_valid_index, enabled_models
+        is_on = change["new"]
+        if is_on:
+            enabled_models.add(model_name)
+        else:
+            enabled_models.discard(model_name)
+        _set_disabled(model_param_boxes[model_name], disabled=(not is_on))
+        _apply_tab_title_style(tab, name_to_index[model_name], model_name, is_on)
+        current_idx = tab.selected_index
+        current_name = index_to_name.get(current_idx)
+        if current_name == model_name and (not is_on):
+            next_idx = None
+            for nm in MODEL_REGISTRY.keys():
+                if nm in enabled_models:
+                    next_idx = name_to_index[nm]
+                    break
+            if next_idx is not None:
+                tab.selected_index = next_idx
+                last_valid_index = next_idx
+
+    for name, cb in model_checks.items():
+        cb.observe(lambda ch, n=name: on_model_toggle(ch, n), names="value")
+
+    def on_tab_change(change):
+        nonlocal last_valid_index
+        if change["name"] == "selected_index":
+            new_idx = change["new"]
+            if new_idx is None or new_idx == -1:
+                return
+            new_name = index_to_name.get(new_idx)
+            if new_name not in enabled_models:
+                tab.selected_index = last_valid_index
+            else:
+                last_valid_index = new_idx
+
+    tab.observe(on_tab_change, names="selected_index")
+
+    # Treino simples
+    btn_train = W.Button(description="Treinar modelos selecionados", button_style="success", icon="play")
+    cb_persist = W.Checkbox(value=True, description="Salvar artefatos (modelo, métricas, params)")
+    out_simple = W.Output()
+
+    @out_simple.capture(clear_output=True)
+    def _on_train_clicked(_):
+        selected = [n for n in MODEL_REGISTRY if n in enabled_models]
+        if not selected:
+            print("Nenhum modelo selecionado.")
+            return
+        print("Treinando:", ", ".join(selected))
+        for name in selected:
+            Model = MODEL_REGISTRY[name]["class"]
+            params = {}
+            for row in model_param_boxes[name].children[0].children:
+                label_html, widget = row.children
+                key = label_html.value.replace("<span class='lumen-label'>","").replace("</span>","")
+                params[key] = getattr(widget, "value", None)
+
+            pipe = SKPipeline(steps=[("prep", preprocess), ("clf", Model(**params))])
+            pipe.fit(X_train, y_train)
+            y_pred = pipe.predict(X_test)
+            avg = "binary" if pd.Series(y_test).nunique() == 2 else "macro"
+            acc = accuracy_score(y_test, y_pred)
+            f1  = f1_score(y_test, y_pred, average=avg)
+            print(f"[{name}] test_accuracy={acc:.4f} | test_f1={f1:.4f}")
+
+            if cb_persist.value:
+                persist_artifacts(
+                    name=f"{name}_Manual",
+                    pipeline=pipe,
+                    metrics={"test_accuracy": float(acc), "test_f1": float(f1)},
+                    params=params,
+                    models_dir=models_dir,
+                    reports_dir=reports_dir
+                )
+
+    btn_train.on_click(_on_train_clicked)
+
+    # Hyperdrive
+    search_title = W.HTML("<div class='lumen-title'>Hyperdrive · Grid / Random Search</div>")
+    search_note  = W.HTML("<span class='lumen-note'>Escolha um modelo, gere a grade e execute a busca.</span>")
+    dd_model_search = W.Dropdown(options=list(MODEL_REGISTRY.keys()), value="LogisticRegression", description="Modelo:")
+    dd_strategy = W.Dropdown(options=["GridSearchCV", "RandomizedSearchCV"], value="GridSearchCV", description="Estratégia:")
+    dd_scoring = W.Dropdown(options=["accuracy", "f1", "f1_macro", "roc_auc", "roc_auc_ovr"], value="f1", description="Scoring:")
+    sl_cv = W.IntSlider(min=3, max=10, step=1, value=5, description="CV folds:")
+    sl_niter = W.IntSlider(min=5, max=200, step=5, value=30, description="n_iter (Random):")
+    btn_generate = W.Button(description="Gerar grade", icon="cogs")
+    btn_runsearch = W.Button(description="Executar Hyperdrive", icon="rocket", button_style="success")
+    ta_space = W.Textarea(value="{}", description="Espaço de busca (JSON):", layout=W.Layout(width="100%", height="130px"))
+    out_info = W.Output()
+    out = W.Output()
+
+    @out_info.capture(clear_output=True)
+    def _on_generate_clicked(_):
+        model_name = dd_model_search.value
+        grid = _build_search_space(MODEL_REGISTRY, model_name)
+        size = 1
+        for _, v in grid.items():
+            size *= max(1, len(v))
+        print(f"[INFO] Espaço gerado para {model_name}: {size} combinações (aprox.)")
+        print("[INFO] Param grid:")
+        print(json.dumps(grid, indent=2, ensure_ascii=False))
+        ta_space.value = json.dumps(grid, indent=2, ensure_ascii=False)
+
+    btn_generate.on_click(_on_generate_clicked)
+
+    @out.capture(clear_output=True)
+    def _on_runsearch_clicked(_):
+        try:
+            param_grid = json.loads(ta_space.value)
+            assert isinstance(param_grid, dict)
+        except Exception as e:
+            print(f"[ERRO] Espaço de busca inválido: {e}")
+            return
+
+        model_name = dd_model_search.value
+        Model = MODEL_REGISTRY[model_name]["class"]
+        clf = Model()
+        pipe = SKPipeline(steps=[("prep", preprocess), ("clf", clf)])
+
+        scoring = dd_scoring.value
+        cv = int(sl_cv.value)
+        strategy = dd_strategy.value
+        start = time.time()
+
+        print(f"[Hyperdrive] Estratégia: {strategy} | Modelo: {model_name} | scoring={scoring} | cv={cv}")
+        try:
+            if strategy == "GridSearchCV":
+                search = GridSearchCV(estimator=pipe, param_grid=param_grid, scoring=scoring, cv=cv, n_jobs=-1)
+            else:
+                search = RandomizedSearchCV(
+                    estimator=pipe,
+                    param_distributions=param_grid,
+                    n_iter=int(sl_niter.value),
+                    scoring=scoring,
+                    cv=cv,
+                    random_state=42,
+                    n_jobs=-1
+                )
+            search.fit(X_train, y_train)  # X cru — preprocess no pipeline
+            dur = time.time() - start
+
+            print(f"\n[OK] Busca finalizada em {dur:.1f}s")
+            print("[BEST] score (cv):", round(float(search.best_score_), 4))
+            print("[BEST] params:")
+            print(json.dumps(search.best_params_, indent=2, ensure_ascii=False))
+
+            y_pred = search.best_estimator_.predict(X_test)
+            avg = "binary" if pd.Series(y_test).nunique() == 2 else "macro"
+            acc = accuracy_score(y_test, y_pred)
+            f1v = f1_score(y_test, y_pred, average=avg)
+            print("\n[TEST] accuracy:", round(float(acc), 4), "| f1:", round(float(f1v), 4))
+
+            # Persistência opcional — reaproveita cb_persist do bloco simples
+            if cb_persist.value:
+                params_clean = {k: (v if isinstance(v, (int, float, str, type(None), bool)) else str(v))
+                                for k, v in search.best_params_.items()}
+                persist_artifacts(
+                    name=f"{model_name}_Hyperdrive_{strategy}",
+                    pipeline=search.best_estimator_,
+                    metrics={"cv_best_score": float(search.best_score_),
+                             "test_accuracy": float(acc),
+                             "test_f1": float(f1v),
+                             "scoring": scoring,
+                             "cv": cv},
+                    params=params_clean,
+                    models_dir=models_dir,
+                    reports_dir=reports_dir
+                )
+        except Exception as e:
+            print(f"[FALHA] {type(e).__name__}: {e}")
+
+    btn_runsearch.on_click(_on_runsearch_clicked)
+
+    # Layout final
+    header = W.HBox([
+        W.HTML("<div class='lumen-title'>Seletor de modelos · Hyperdrive</div>"),
+        W.HTML("<div class='lumen-chip'>v2 · warp-ready</div>"),
+    ], layout=W.Layout(justify_content="space-between"))
+
+    checks_row = W.HBox(list(model_checks.values()))
+    controls_simple = W.HBox([btn_train, cb_persist], layout=W.Layout(gap="8px"))
+
+    search_controls_top = W.HBox([dd_model_search, dd_strategy, dd_scoring, sl_cv, sl_niter],
+                                 layout=W.Layout(gap="8px", flex_flow="row wrap"))
+    search_controls_btns = W.HBox([btn_generate, btn_runsearch], layout=W.Layout(gap="8px"))
+    hyper_box = W.VBox([
+        W.HTML("<div class='lumen-chip'>Hyperdrive — Busca de hiperparâmetros</div>"),
+        search_title,
+        search_note,
+        W.HTML("<div class='lumen-chip'>Espaço de busca (param_grid)</div>"),
+        ta_space,
+        search_controls_top,
+        search_controls_btns,
+        out_info,
+        W.HTML("<hr style='border-color: rgba(0,255,209,0.2)'>"),
+        out
+    ], layout=W.Layout(padding="8px"))
+
+    panel = W.VBox([
+        header,
+        checks_row,
+        tab,
+        W.HTML("<div class='lumen-chip'>Treino direto (usa os hiperparâmetros selecionados nas abas acima)</div>"),
+        controls_simple,
+        out_simple,
+        W.HTML("<div style='height:10px;'></div>"),
+        hyper_box
+    ], layout=W.Layout(padding="8px"))
+
+    display(W.Box([panel], layout=W.Layout(width="100%")),
+            HTML("<div class='lumen-console' style='margin-top:8px;'></div>"))

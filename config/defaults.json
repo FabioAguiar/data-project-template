@@ -47,11 +47,11 @@
     "manifest_enabled": true
   },
   "target": {
-  "name": "Churn",
-  "source": "Churn",
-  "positive": "Yes",
-  "negative": "No"
-},
+    "name": "Churn",
+    "source": "Churn",
+    "positive": "Yes",
+    "negative": "No"
+  },
   "dates": {
     "detect_regex": "(date|data|dt_|_dt$|_date$|_at$|time|timestamp|created|updated)",
     "explicit_cols": [],
@@ -60,5 +60,16 @@
     "formats": [],
     "min_ratio": 0.8,
     "report_path": "date_parse_report.csv"
+  },
+  "artifacts_dir": "artifacts",
+  "data_raw_dir": "data/raw",
+  "data_processed_dir": "data/processed",
+  "data_processed_file": "processed.parquet",
+  "target_column": "Churn",
+  "test_size": 0.2,
+  "random_state": 42,
+  "class_map": {
+    "Yes": 1,
+    "No": 0
   }
 }

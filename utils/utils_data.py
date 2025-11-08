@@ -1648,3 +1648,257 @@ def extract_text_features(
             pass
 
     return df_out, text_summary
+
+# -----------------------------------------------------------------------------
+# Patch additions for N2 interoperability (non-breaking)
+# -----------------------------------------------------------------------------
+
+def get_project_root() -> Path:
+    return ensure_project_root()
+
+def ensure_artifact_dirs(cfg: Dict[str, Any]) -> Tuple[Path, Path, Path]:
+    root = ensure_project_root()
+    artifacts_dir = (root / cfg.get("artifacts_dir", "artifacts")).resolve()
+    reports_dir = (root / "reports").resolve()
+    models_dir = (artifacts_dir / "models").resolve()
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    models_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        logger.info(f"[ensure_artifact_dirs] artifacts={artifacts_dir} | reports={reports_dir} | models={models_dir}")
+    except Exception:
+        pass
+    return artifacts_dir, reports_dir, models_dir
+
+def resolve_processed_path(cfg: Dict[str, Any]) -> Path:
+    root = ensure_project_root()
+    data_proc_dir = (root / cfg.get("data_processed_dir", "data/processed")).resolve()
+    explicit = cfg.get("data_processed_file")
+
+    if explicit:
+        cand = data_proc_dir / explicit
+        if cand.exists():
+            return cand
+        else:
+            try:
+                logger.warning(f"[resolve_processed_path] data_processed_file='{explicit}' não encontrado em {data_proc_dir}.")
+            except Exception:
+                print(f"[WARN] data_processed_file='{explicit}' não encontrado em {data_proc_dir}.")
+
+    for ext in ("*.parquet", "*.pq", "*.csv", "*.xlsx"):
+        matches = sorted(data_proc_dir.glob(ext))
+        if matches:
+            try:
+                logger.info(f"[resolve_processed_path] usando '{matches[0].name}' em {data_proc_dir}.")
+            except Exception:
+                pass
+            return matches[0]
+
+    for ext in ("processed.parquet", "processed.csv", "final.parquet", "final.csv"):
+        for f in data_proc_dir.rglob(ext):
+            try:
+                logger.info(f"[resolve_processed_path] fallback recursivo usando {f}")
+            except Exception:
+                pass
+            return f
+
+    if not data_proc_dir.exists():
+        raise FileNotFoundError(f"Diretório {data_proc_dir} não existe. Garanta que o N1 criou a pasta/arquivo.")
+
+    files = [f.name for f in data_proc_dir.glob("*")]
+    hint = "\n".join(f" - {n}" for n in files) if files else " (vazio)"
+    raise FileNotFoundError(
+        "Nenhum arquivo processado encontrado em data/processed/."
+        f" Conteúdo atual de {data_proc_dir}:\n{hint}\n"
+        "-> Ajuste 'data_processed_file' no config ou rode o N1 para gerar o arquivo final."
+    )
+
+def summarize_columns(df: pd.DataFrame) -> Tuple[list, list, list]:
+    import numpy as _np
+    numeric_cols = df.select_dtypes(include=[_np.number]).columns.tolist()
+    categorical_cols = df.select_dtypes(exclude=[_np.number]).columns.tolist()
+    other_cols = [c for c in df.columns if c not in numeric_cols + categorical_cols]
+    return numeric_cols, categorical_cols, other_cols
+
+try:
+    __all__.extend(["get_project_root", "ensure_artifact_dirs", "resolve_processed_path", "summarize_columns"])
+    __all__ = sorted(set(__all__))
+except Exception:
+    pass
+
+
+# ============================================================================
+# Adições utilitárias para N2 — definidas apenas se ainda não existirem
+# ============================================================================
+from pathlib import Path
+from typing import Any, Dict, Tuple
+import json
+
+# ---- Descoberta da raiz do projeto via config/defaults.json ----
+try:
+    _find_up  # type: ignore[name-defined]
+except NameError:
+    def _find_up(relative_path: str, start: Path | None = None) -> Path | None:
+        start = start or Path.cwd()
+        rel = Path(relative_path)
+        for base in (start, *start.parents):
+            cand = base / rel
+            if cand.exists():
+                return cand
+        return None
+
+try:
+    get_project_root  # type: ignore[name-defined]
+except NameError:
+    def get_project_root() -> Path:
+        cfg_path = _find_up("config/defaults.json")
+        if cfg_path is None:
+            raise FileNotFoundError("config/defaults.json não encontrado. Abra o notebook dentro do projeto.")
+        return cfg_path.parent.parent  # .../config/defaults.json -> raiz do projeto
+
+# ---- Leitura de config ----
+try:
+    load_config  # type: ignore[name-defined]
+except NameError:
+    def load_config(config_rel: str = "config/defaults.json") -> Dict[str, Any]:
+        root = get_project_root()
+        cfg_file = (root / config_rel).resolve()
+        if not cfg_file.exists():
+            raise FileNotFoundError(f"Arquivo de config não encontrado: {cfg_file}")
+        with cfg_file.open("r", encoding="utf-8") as f:
+            return json.load(f)
+
+# ---- Diretórios de artefatos/reports/models na RAIZ do projeto ----
+try:
+    ensure_dirs  # type: ignore[name-defined]
+except NameError:
+    def ensure_dirs(cfg: Dict[str, Any]) -> Tuple[Path, Path, Path]:
+        root = get_project_root()
+        artifacts_dir = (root / cfg.get("artifacts_dir", "artifacts")).resolve()
+        reports_dir = (root / "reports").resolve()
+        models_dir = (artifacts_dir / "models").resolve()
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        models_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            logger.info(f"[ensure_dirs] artifacts={artifacts_dir} | reports={reports_dir} | models={models_dir}")  # type: ignore[name-defined]
+        except Exception:
+            pass
+        return artifacts_dir, reports_dir, models_dir
+
+# ---- Resolução do arquivo processado (saída do N1) ----
+try:
+    discover_processed_path  # type: ignore[name-defined]
+except NameError:
+    def discover_processed_path(cfg: Dict[str, Any]) -> Path:
+        root = get_project_root()
+        data_proc_dir = (root / cfg.get("data_processed_dir", "data/processed")).resolve()
+        explicit = cfg.get("data_processed_file")
+
+        # 1) Nome explícito
+        if explicit:
+            cand = data_proc_dir / explicit
+            if cand.exists():
+                return cand
+            else:
+                try:
+                    logger.warning(f"[discover_processed_path] data_processed_file='{explicit}' não encontrado em {data_proc_dir}.")  # type: ignore[name-defined]
+                except Exception:
+                    print(f"[WARN] data_processed_file='{explicit}' não encontrado em {data_proc_dir}.")
+
+        # 2) Extensões comuns
+        for ext in ("*.parquet", "*.pq", "*.csv", "*.xlsx"):
+            matches = sorted(data_proc_dir.glob(ext))
+            if matches:
+                try:
+                    logger.info(f"[discover_processed_path] usando '{matches[0].name}' em {data_proc_dir}.")  # type: ignore[name-defined]
+                except Exception:
+                    pass
+                return matches[0]
+
+        # 3) Fallback recursivo por nomes comuns
+        for ext in ("processed.parquet", "processed.csv", "final.parquet", "final.csv"):
+            for f in data_proc_dir.rglob(ext):
+                try:
+                    logger.info(f"[discover_processed_path] fallback recursivo usando {f}")  # type: ignore[name-defined]
+                except Exception:
+                    pass
+                return f
+
+        # 4) Diagnóstico
+        if not data_proc_dir.exists():
+            raise FileNotFoundError(f"Diretório {data_proc_dir} não existe. Garanta que o N1 criou a pasta/arquivo.")
+
+        files = [f.name for f in data_proc_dir.glob("*")]
+        hint = "\n".join(f" - {n}" for n in files) if files else " (vazio)"
+        msg = (
+            "Nenhum arquivo processado encontrado em data/processed/."
+            f" Conteúdo atual de {data_proc_dir}:\n{hint}\n"
+            "-> Ajuste 'data_processed_file' no config ou rode o N1 para gerar o arquivo final."
+        )
+        raise FileNotFoundError(msg)
+
+# ---- Resumo de colunas (num/cat/outros) ----
+try:
+    summarize_columns  # type: ignore[name-defined]
+except NameError:
+    def summarize_columns(df):
+        import numpy as _np
+        numeric_cols = df.select_dtypes(include=[_np.number]).columns.tolist()
+        categorical_cols = df.select_dtypes(exclude=[_np.number]).columns.tolist()
+        other_cols = [c for c in df.columns if c not in numeric_cols + categorical_cols]
+        return numeric_cols, categorical_cols, other_cols
+
+# ---- Métricas e plots auxiliares para avaliação ----
+try:
+    compute_metrics  # type: ignore[name-defined]
+except NameError:
+    def compute_metrics(y_true, y_pred):
+        import pandas as _pd
+        from sklearn.metrics import accuracy_score, f1_score
+        avg = "binary" if _pd.Series(y_true).nunique() == 2 else "macro"
+        return {
+            "accuracy": float(accuracy_score(y_true, y_pred)),
+            "f1": float(f1_score(y_true, y_pred, average=avg)),
+        }
+
+try:
+    try_plot_roc  # type: ignore[name-defined]
+except NameError:
+    def try_plot_roc(clf, X_test, y_test):
+        import pandas as _pd
+        from sklearn.metrics import RocCurveDisplay
+        import matplotlib.pyplot as _plt
+
+        # Plot ROC apenas para binário e se houver predict_proba
+        if _pd.Series(y_test).nunique() != 2:
+            return False
+        if not hasattr(clf, "predict_proba"):
+            return False
+        try:
+            RocCurveDisplay.from_estimator(clf, X_test, y_test)
+            _plt.title("ROC Curve")
+            _plt.show()
+            return True
+        except Exception as e:
+            print(f"[AVISO] ROC não foi plotado: {e}")
+            return False
+
+try:
+    persist_artifacts  # type: ignore[name-defined]
+except NameError:
+    def persist_artifacts(name, pipeline, metrics, params, models_dir: Path, reports_dir: Path):
+        from datetime import datetime as _dt
+        import json as _json
+        import joblib as _joblib
+
+        ts = _dt.now().strftime("%Y%m%d_%H%M%S")
+        base = f"{name}_{ts}"
+
+        _joblib.dump(pipeline, models_dir / f"{base}.joblib")
+        (models_dir / f"{base}_metrics.json").write_text(_json.dumps(metrics, indent=2, ensure_ascii=False))
+        (models_dir / f"{base}_params.json").write_text(_json.dumps(params, indent=2, ensure_ascii=False, default=str))
+
+        manifest_rec = {"ts": ts, "model": name, "file": f"{base}.joblib", "metrics": metrics, "params": params}
+        (reports_dir / "manifest.jsonl").open("a", encoding="utf-8").write(_json.dumps(manifest_rec, ensure_ascii=False) + "\n")
+        print(f"[OK] Artefatos salvos em: {models_dir} e manifesto atualizado em reports/manifest.jsonl")

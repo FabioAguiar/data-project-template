@@ -1203,6 +1203,28 @@
         "rows": 0
       },
       "timestamp": "2025-11-04T05:00:07"
+    },
+    {
+      "step": "n1_quality_typing:start",
+      "details": {
+        "config": {}
+      },
+      "timestamp": "2025-11-09T09:46:08"
+    },
+    {
+      "step": "save_report_df",
+      "details": {
+        "path": "C:\\Users\\fabio\\Projetos DEV\\data projects\\data-project-template\\reports\\cast_report.csv",
+        "rows": 18
+      },
+      "timestamp": "2025-11-09T09:46:08"
+    },
+    {
+      "step": "n1_quality_typing:end",
+      "details": {
+        "config": {}
+      },
+      "timestamp": "2025-11-09T09:46:08"
     }
   ]
 }
